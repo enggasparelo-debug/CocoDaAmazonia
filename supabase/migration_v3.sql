@@ -101,28 +101,36 @@ begin
   update public.inventory_movements set tenant_id = default_tenant where tenant_id is null;
 end $$;
 
--- ---------- 4. Trigger: signup → cria tenant + admin ---------
+-- ---------- 4. Trigger: signup ------------------------------
+-- Se há 1 loja, novo usuário entra como operador.
+-- Caso contrário, cria nova loja para o usuário como admin.
 create or replace function public.handle_new_user()
 returns trigger language plpgsql security definer as $$
 declare
   v_tenant uuid;
+  v_count int;
 begin
-  insert into public.tenants (name) values ('Minha Loja')
-    returning id into v_tenant;
-  insert into public.memberships (user_id, tenant_id, role)
-    values (new.id, v_tenant, 'admin');
+  select count(*) into v_count from public.tenants;
 
-  -- copia o produto padrão e formas de pagamento
-  insert into public.product_settings (name, unit_price, tenant_id)
-    values ('Coco Verde', 3.00, v_tenant);
-
-  insert into public.payment_methods (name, is_credit, tenant_id) values
-    ('Dinheiro', false, v_tenant),
-    ('Pix', false, v_tenant),
-    ('Cartão Débito', false, v_tenant),
-    ('Cartão Crédito', false, v_tenant),
-    ('A Prazo (Fiado)', true, v_tenant)
-  on conflict do nothing;
+  if v_count = 1 then
+    select id into v_tenant from public.tenants limit 1;
+    insert into public.memberships (user_id, tenant_id, role)
+      values (new.id, v_tenant, 'operador');
+  else
+    insert into public.tenants (name) values ('Minha Loja')
+      returning id into v_tenant;
+    insert into public.memberships (user_id, tenant_id, role)
+      values (new.id, v_tenant, 'admin');
+    insert into public.product_settings (name, unit_price, tenant_id)
+      values ('Coco Verde', 3.00, v_tenant);
+    insert into public.payment_methods (name, is_credit, tenant_id) values
+      ('Dinheiro', false, v_tenant),
+      ('Pix', false, v_tenant),
+      ('Cartão Débito', false, v_tenant),
+      ('Cartão Crédito', false, v_tenant),
+      ('A Prazo (Fiado)', true, v_tenant)
+    on conflict do nothing;
+  end if;
 
   return new;
 end;

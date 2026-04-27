@@ -344,22 +344,38 @@ create table if not exists public.push_subscriptions (
 );
 
 -- ---------- 13. Trigger de signup ---------------------------
+-- Comportamento:
+--   * Se já existe exatamente 1 loja, novo usuário entra nela como 'operador'.
+--   * Se houver 0 ou >1 lojas, cria uma loja nova p/ esse usuário (admin).
+-- Isso permite uso single-tenant (uma loja, vários operadores) sem
+-- abrir mão da capacidade multi-tenant.
 create or replace function public.handle_new_user()
 returns trigger language plpgsql security definer as $$
-declare v_tenant uuid;
+declare
+  v_tenant uuid;
+  v_count int;
 begin
-  insert into public.tenants (name) values ('Minha Loja') returning id into v_tenant;
-  insert into public.memberships (user_id, tenant_id, role)
-    values (new.id, v_tenant, 'admin');
-  insert into public.product_settings (name, unit_price, tenant_id)
-    values ('Coco Verde', 3.00, v_tenant);
-  insert into public.payment_methods (name, is_credit, tenant_id) values
-    ('Dinheiro', false, v_tenant),
-    ('Pix', false, v_tenant),
-    ('Cartão Débito', false, v_tenant),
-    ('Cartão Crédito', false, v_tenant),
-    ('A Prazo (Fiado)', true, v_tenant)
-  on conflict do nothing;
+  select count(*) into v_count from public.tenants;
+
+  if v_count = 1 then
+    select id into v_tenant from public.tenants limit 1;
+    insert into public.memberships (user_id, tenant_id, role)
+      values (new.id, v_tenant, 'operador');
+  else
+    insert into public.tenants (name) values ('Minha Loja') returning id into v_tenant;
+    insert into public.memberships (user_id, tenant_id, role)
+      values (new.id, v_tenant, 'admin');
+    insert into public.product_settings (name, unit_price, tenant_id)
+      values ('Coco Verde', 3.00, v_tenant);
+    insert into public.payment_methods (name, is_credit, tenant_id) values
+      ('Dinheiro', false, v_tenant),
+      ('Pix', false, v_tenant),
+      ('Cartão Débito', false, v_tenant),
+      ('Cartão Crédito', false, v_tenant),
+      ('A Prazo (Fiado)', true, v_tenant)
+    on conflict do nothing;
+  end if;
+
   return new;
 end;
 $$;
