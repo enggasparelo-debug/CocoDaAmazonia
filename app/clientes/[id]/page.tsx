@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
@@ -12,9 +12,14 @@ import type {
   SalePayment,
 } from "@/lib/types";
 import StatusBadge from "@/components/StatusBadge";
+import ConfirmModal from "@/components/ConfirmModal";
+import { useToast } from "@/components/Toast";
+import { useTenant } from "@/lib/useTenant";
 
 export default function ClienteDetalhePage() {
   const supabase = createClient();
+  const toast = useToast();
+  const { isAdmin } = useTenant();
   const params = useParams<{ id: string }>();
   const id = params.id;
 
@@ -23,6 +28,7 @@ export default function ClienteDetalhePage() {
   const [payments, setPayments] = useState<SalePayment[]>([]);
   const [methods, setMethods] = useState<Record<string, PaymentMethod>>({});
   const [loading, setLoading] = useState(true);
+  const [confirmDelete, setConfirmDelete] = useState<SalePayment | null>(null);
 
   async function load() {
     setLoading(true);
@@ -58,6 +64,28 @@ export default function ClienteDetalhePage() {
   useEffect(() => {
     load();
   }, [id]);
+
+  async function deletePayment(p: SalePayment) {
+    const { error } = await supabase
+      .from("sale_payments")
+      .delete()
+      .eq("id", p.id);
+    setConfirmDelete(null);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Pagamento removido.");
+    load();
+  }
+
+  const sortedPayments = useMemo(
+    () =>
+      [...payments].sort(
+        (a, b) => new Date(b.paid_at).getTime() - new Date(a.paid_at).getTime()
+      ),
+    [payments]
+  );
 
   if (loading) return <div className="text-coco-700">Carregando…</div>;
   if (!customer) return <div className="text-coco-700">Cliente não encontrado.</div>;
@@ -136,6 +164,69 @@ export default function ClienteDetalhePage() {
       </div>
 
       <div className="card">
+        <h2 className="font-bold text-coco-900 mb-3">
+          Histórico de pagamentos
+        </h2>
+        {sortedPayments.length === 0 ? (
+          <p className="text-coco-600 text-sm">
+            Nenhum pagamento lançado ainda.
+          </p>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Data do pagamento</th>
+                <th>Forma</th>
+                <th className="text-right">Valor</th>
+                <th>Venda</th>
+                <th>Observação</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedPayments.map((p) => {
+                const sale = sales.find((s) => s.id === p.sale_id);
+                return (
+                  <tr key={p.id}>
+                    <td>{fmtDate(p.paid_at)}</td>
+                    <td>{methods[p.payment_method_id]?.name ?? "—"}</td>
+                    <td className="text-right font-semibold text-green-700">
+                      {brl(Number(p.amount))}
+                    </td>
+                    <td className="text-xs">
+                      {sale ? (
+                        <Link
+                          href={`/recibo/${sale.id}`}
+                          target="_blank"
+                          className="text-coco-700 underline"
+                        >
+                          venda de {fmtDate(sale.created_at)}
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="text-xs text-coco-600">{p.notes ?? ""}</td>
+                    <td className="text-right">
+                      {isAdmin && (
+                        <button
+                          onClick={() => setConfirmDelete(p)}
+                          className="btn-ghost text-xs text-red-700"
+                          title="Remover pagamento"
+                        >
+                          🗑
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div className="card">
         <h2 className="font-bold text-coco-900 mb-3">Histórico de vendas</h2>
         {sales.length === 0 ? (
           <p className="text-coco-600">Sem vendas ainda.</p>
@@ -168,16 +259,19 @@ export default function ClienteDetalhePage() {
                       <StatusBadge status={s.status} />
                     </td>
                     <td className="text-xs">
-                      {sp.length === 0
-                        ? "—"
-                        : sp
-                            .map(
-                              (p) =>
-                                `${
-                                  methods[p.payment_method_id]?.name ?? "?"
-                                } ${brl(Number(p.amount))}`
-                            )
-                            .join(", ")}
+                      {sp.length === 0 ? (
+                        "—"
+                      ) : (
+                        <div className="space-y-0.5">
+                          {sp.map((p) => (
+                            <div key={p.id}>
+                              {fmtDate(p.paid_at)} ·{" "}
+                              {methods[p.payment_method_id]?.name ?? "?"} ·{" "}
+                              <strong>{brl(Number(p.amount))}</strong>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </td>
                     <td className="text-right">
                       <Link
@@ -195,6 +289,25 @@ export default function ClienteDetalhePage() {
           </table>
         )}
       </div>
+
+      {confirmDelete && (
+        <ConfirmModal
+          title="Remover pagamento?"
+          danger
+          confirmText="Remover"
+          message={
+            <>
+              Vai apagar o lançamento de{" "}
+              <strong>{brl(Number(confirmDelete.amount))}</strong> em{" "}
+              {fmtDate(confirmDelete.paid_at)}. Isso atualiza o saldo da venda
+              correspondente automaticamente. A ação fica registrada na
+              auditoria.
+            </>
+          }
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={() => deletePayment(confirmDelete)}
+        />
+      )}
     </div>
   );
 }

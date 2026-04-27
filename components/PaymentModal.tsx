@@ -28,6 +28,11 @@ export default function PaymentModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [paidAt, setPaidAt] = useState<string>(() => {
+    const d = new Date();
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    return d.toISOString().slice(0, 16);
+  });
 
   const cashMethods = useMemo(
     () => methods.filter((m) => !m.is_credit),
@@ -65,6 +70,15 @@ export default function PaymentModal({
       );
       return;
     }
+    if (!paidAt) {
+      setError("Informe a data do pagamento.");
+      return;
+    }
+    const paidAtIso = new Date(paidAt).toISOString();
+    if (new Date(paidAtIso).getTime() > Date.now() + 60_000) {
+      setError("A data do pagamento não pode ser no futuro.");
+      return;
+    }
     setSaving(true);
     try {
       const valid = entries.filter(
@@ -76,6 +90,7 @@ export default function PaymentModal({
             sale_id: saleId,
             payment_method_id: e.payment_method_id,
             amount: Number(e.amount),
+            paid_at: paidAtIso,
           }))
         );
         if (error) throw error;
@@ -125,6 +140,20 @@ export default function PaymentModal({
                   {brl(remaining)}
                 </div>
               </div>
+            </div>
+
+            <div className="mb-4">
+              <label className="label">Data do pagamento</label>
+              <input
+                type="datetime-local"
+                className="input max-w-xs"
+                value={paidAt}
+                onChange={(e) => setPaidAt(e.target.value)}
+              />
+              <p className="text-xs text-coco-600 mt-1">
+                Padrão: agora. Pode ajustar se o pagamento foi em outro
+                momento.
+              </p>
             </div>
 
             <div className="mb-4">

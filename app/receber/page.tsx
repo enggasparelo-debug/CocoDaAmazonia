@@ -32,6 +32,8 @@ function ReceberInner() {
   const [payingSale, setPayingSale] = useState<Sale | null>(null);
   const [payMethod, setPayMethod] = useState<string>("");
   const [payAmount, setPayAmount] = useState<number>(0);
+  const [payDate, setPayDate] = useState<string>("");
+  const [payNotes, setPayNotes] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
 
   async function loadAll() {
@@ -85,6 +87,12 @@ function ReceberInner() {
   function startPay(s: Sale) {
     setPayingSale(s);
     setPayAmount(+(Number(s.total) - Number(s.paid_amount)).toFixed(2));
+    // default: hoje (formato datetime-local: AAAA-MM-DDTHH:mm)
+    const d = new Date();
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    setPayDate(d.toISOString().slice(0, 16));
+    setPayNotes("");
+    setError(null);
   }
 
   async function confirmPay() {
@@ -92,10 +100,19 @@ function ReceberInner() {
     setError(null);
     if (!payMethod) return setError("Escolha uma forma de pagamento.");
     if (payAmount <= 0) return setError("Valor inválido.");
+    if (!payDate) return setError("Informe a data do pagamento.");
+
+    const paidAtIso = new Date(payDate).toISOString();
+    if (new Date(paidAtIso).getTime() > Date.now() + 60_000) {
+      return setError("A data do pagamento não pode ser no futuro.");
+    }
+
     const { error } = await supabase.from("sale_payments").insert({
       sale_id: payingSale.id,
       payment_method_id: payMethod,
       amount: payAmount,
+      paid_at: paidAtIso,
+      notes: payNotes || null,
     });
     if (error) {
       setError(error.message);
@@ -277,19 +294,30 @@ function ReceberInner() {
               {brl(Number(payingSale.paid_amount))} já recebido.
             </p>
             <div className="space-y-3">
-              <div>
-                <label className="label">Forma de pagamento</label>
-                <select
-                  className="input"
-                  value={payMethod}
-                  onChange={(e) => setPayMethod(e.target.value)}
-                >
-                  {methods.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Forma de pagamento</label>
+                  <select
+                    className="input"
+                    value={payMethod}
+                    onChange={(e) => setPayMethod(e.target.value)}
+                  >
+                    {methods.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Data do pagamento</label>
+                  <input
+                    type="datetime-local"
+                    className="input"
+                    value={payDate}
+                    onChange={(e) => setPayDate(e.target.value)}
+                  />
+                </div>
               </div>
               <div>
                 <label className="label">Valor recebido</label>
@@ -301,6 +329,15 @@ function ReceberInner() {
                   onChange={(e) =>
                     setPayAmount(parseFloat(e.target.value || "0"))
                   }
+                />
+              </div>
+              <div>
+                <label className="label">Observação (opcional)</label>
+                <input
+                  className="input"
+                  value={payNotes}
+                  onChange={(e) => setPayNotes(e.target.value)}
+                  placeholder="Ex.: pagamento em mãos, comprovante #123…"
                 />
               </div>
             </div>
