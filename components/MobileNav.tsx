@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
+import { useTenant } from "@/lib/useTenant";
 
 const items = [
   { href: "/", label: "Painel", icon: "📊" },
@@ -18,6 +19,7 @@ const items = [
   { href: "/financeiro", label: "Financeiro", icon: "💰" },
   { href: "/relatorios", label: "Relatórios", icon: "📈" },
   { href: "/configuracoes", label: "Configurações", icon: "⚙️" },
+  { href: "/auditoria", label: "Auditoria", icon: "🔍", adminOnly: true },
 ];
 
 export default function MobileNav() {
@@ -25,6 +27,8 @@ export default function MobileNav() {
   const path = usePathname();
   const router = useRouter();
   const supabase = createClient();
+  const { isAdmin } = useTenant();
+  const visible = items.filter((i) => !i.adminOnly || isAdmin);
 
   async function logout() {
     await supabase.auth.signOut();
@@ -59,7 +63,7 @@ export default function MobileNav() {
               <button onClick={() => setOpen(false)} className="text-2xl">×</button>
             </div>
             <nav className="space-y-1 flex-1">
-              {items.map((it) => {
+              {visible.map((it) => {
                 const active =
                   it.href === "/" ? path === "/" : path.startsWith(it.href);
                 return (

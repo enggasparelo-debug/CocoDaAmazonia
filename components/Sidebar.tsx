@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useEffect, useState } from "react";
+import { useTenant } from "@/lib/useTenant";
 
 const items = [
   { href: "/", label: "Painel", icon: "📊" },
@@ -17,6 +18,7 @@ const items = [
   { href: "/financeiro", label: "Financeiro", icon: "💰" },
   { href: "/relatorios", label: "Relatórios", icon: "📈" },
   { href: "/configuracoes", label: "Configurações", icon: "⚙️" },
+  { href: "/auditoria", label: "Auditoria", icon: "🔍", adminOnly: true },
 ];
 
 export default function Sidebar() {
@@ -24,6 +26,7 @@ export default function Sidebar() {
   const router = useRouter();
   const supabase = createClient();
   const [email, setEmail] = useState<string | null>(null);
+  const { tenant, isAdmin } = useTenant();
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -37,16 +40,18 @@ export default function Sidebar() {
     router.refresh();
   }
 
+  const visible = items.filter((i) => !i.adminOnly || isAdmin);
+
   return (
     <aside className="w-60 bg-coco-800 text-coco-50 hidden md:flex flex-col py-6 px-4 sticky top-0 h-screen">
       <div className="px-2 mb-8">
         <div className="text-2xl font-bold">🥥 Coco</div>
         <div className="text-coco-200 text-xs uppercase tracking-widest">
-          da Amazônia
+          {tenant?.name ?? "da Amazônia"}
         </div>
       </div>
       <nav className="flex-1 space-y-1 overflow-y-auto">
-        {items.map((it) => {
+        {visible.map((it) => {
           const active =
             it.href === "/" ? path === "/" : path.startsWith(it.href);
           return (
@@ -67,8 +72,9 @@ export default function Sidebar() {
       </nav>
       <div className="border-t border-coco-700 pt-3 mt-3 px-2">
         {email && (
-          <div className="text-coco-200 text-xs truncate mb-2" title={email}>
+          <div className="text-coco-200 text-xs truncate mb-1" title={email}>
             👤 {email}
+            {isAdmin && <span className="ml-1 text-coco-300">(admin)</span>}
           </div>
         )}
         <button
@@ -77,7 +83,7 @@ export default function Sidebar() {
         >
           ↩ Sair
         </button>
-        <div className="text-xs text-coco-300 mt-3">v0.2 · Supabase + Vercel</div>
+        <div className="text-xs text-coco-300 mt-3">v0.3 · Supabase + Vercel</div>
       </div>
     </aside>
   );

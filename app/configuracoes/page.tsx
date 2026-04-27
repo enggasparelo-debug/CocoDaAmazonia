@@ -2,56 +2,83 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { ProductSettings } from "@/lib/types";
+import type { ProductSettings, Tenant } from "@/lib/types";
 import { brl } from "@/lib/format";
+import { useTenant } from "@/lib/useTenant";
+import { useToast } from "@/components/Toast";
+import PushOptIn from "@/components/PushOptIn";
 
 export default function ConfiguracoesPage() {
   const supabase = createClient();
+  const toast = useToast();
+  const { tenant, isAdmin, refresh } = useTenant();
   const [settings, setSettings] = useState<ProductSettings | null>(null);
-  const [name, setName] = useState("");
+  const [productName, setProductName] = useState("");
   const [price, setPrice] = useState(0);
+  const [minStock, setMinStock] = useState<number>(0);
+
+  const [biz, setBiz] = useState<Partial<Tenant>>({});
   const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   async function load() {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("product_settings")
       .select("*")
       .limit(1)
-      .single();
-    if (error) {
-      setError(error.message);
-      return;
+      .maybeSingle();
+    if (data) {
+      setSettings(data as ProductSettings);
+      setProductName(data.name);
+      setPrice(Number(data.unit_price));
+      setMinStock(Number(data.min_stock ?? 0));
     }
-    setSettings(data as ProductSettings);
-    setName(data.name);
-    setPrice(Number(data.unit_price));
   }
   useEffect(() => {
     load();
   }, []);
 
-  async function save() {
+  useEffect(() => {
+    if (tenant) setBiz(tenant);
+  }, [tenant]);
+
+  async function saveProduct() {
     if (!settings) return;
     setSaving(true);
-    setMsg(null);
-    setError(null);
     const { error } = await supabase
       .from("product_settings")
       .update({
-        name,
+        name: productName,
         unit_price: price,
+        min_stock: minStock,
         updated_at: new Date().toISOString(),
       })
       .eq("id", settings.id);
     setSaving(false);
-    if (error) {
-      setError(error.message);
-      return;
-    }
-    setMsg("Salvo!");
+    if (error) return toast.error(error.message);
+    toast.success("Produto atualizado.");
     load();
+  }
+
+  async function saveBiz() {
+    if (!tenant) return;
+    if (!isAdmin)
+      return toast.error("Apenas administradores podem alterar a empresa.");
+    setSaving(true);
+    const { error } = await supabase
+      .from("tenants")
+      .update({
+        name: biz.name ?? tenant.name,
+        cnpj: biz.cnpj ?? null,
+        phone: biz.phone ?? null,
+        address: biz.address ?? null,
+        receipt_msg: biz.receipt_msg ?? null,
+        edit_window_hours: biz.edit_window_hours ?? 24,
+      })
+      .eq("id", tenant.id);
+    setSaving(false);
+    if (error) return toast.error(error.message);
+    toast.success("Empresa atualizada.");
+    refresh();
   }
 
   return (
@@ -59,40 +86,150 @@ export default function ConfiguracoesPage() {
       <header>
         <h1 className="text-3xl font-bold text-coco-900">Configurações</h1>
         <p className="text-coco-600">
-          Defina o produto único e o preço padrão. O operador ainda poderá
-          ajustar o preço na hora da venda.
+          Empresa, produto, regras e notificações.
         </p>
       </header>
 
-      <div className="card max-w-lg space-y-4">
-        <div>
-          <label className="label">Nome do produto</label>
-          <input
-            className="input"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </div>
-        <div>
-          <label className="label">Preço unitário padrão (R$)</label>
-          <input
-            type="number"
-            step="0.01"
-            className="input text-2xl font-bold"
-            value={price}
-            onChange={(e) => setPrice(parseFloat(e.target.value || "0"))}
-          />
-          <p className="text-xs text-coco-600 mt-1">
-            Atual: {brl(Number(settings?.unit_price ?? 0))}
-          </p>
+      <div className="grid lg:grid-cols-2 gap-6">
+        <div className="card space-y-3">
+          <h2 className="font-bold text-coco-900">Empresa</h2>
+          {!isAdmin && (
+            <p className="text-xs text-amber-700">
+              Visualização apenas. Apenas administradores podem editar.
+            </p>
+          )}
+          <div>
+            <label className="label">Nome</label>
+            <input
+              className="input"
+              value={biz.name ?? ""}
+              onChange={(e) => setBiz({ ...biz, name: e.target.value })}
+              disabled={!isAdmin}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">CNPJ / CPF</label>
+              <input
+                className="input"
+                value={biz.cnpj ?? ""}
+                onChange={(e) => setBiz({ ...biz, cnpj: e.target.value })}
+                disabled={!isAdmin}
+              />
+            </div>
+            <div>
+              <label className="label">Telefone</label>
+              <input
+                className="input"
+                value={biz.phone ?? ""}
+                onChange={(e) => setBiz({ ...biz, phone: e.target.value })}
+                disabled={!isAdmin}
+              />
+            </div>
+          </div>
+          <div>
+            <label className="label">Endereço</label>
+            <input
+              className="input"
+              value={biz.address ?? ""}
+              onChange={(e) => setBiz({ ...biz, address: e.target.value })}
+              disabled={!isAdmin}
+            />
+          </div>
+          <div>
+            <label className="label">Mensagem do recibo</label>
+            <input
+              className="input"
+              value={biz.receipt_msg ?? ""}
+              placeholder="Ex.: Obrigado pela preferência!"
+              onChange={(e) => setBiz({ ...biz, receipt_msg: e.target.value })}
+              disabled={!isAdmin}
+            />
+          </div>
+          <div>
+            <label className="label">
+              Janela de edição de venda (horas)
+            </label>
+            <input
+              type="number"
+              min={0}
+              className="input w-32"
+              value={biz.edit_window_hours ?? 24}
+              onChange={(e) =>
+                setBiz({
+                  ...biz,
+                  edit_window_hours: parseInt(e.target.value || "0"),
+                })
+              }
+              disabled={!isAdmin}
+            />
+            <p className="text-xs text-coco-600 mt-1">
+              Após este tempo, vendas só podem ser editadas/canceladas por
+              admin. Coloque 0 para sempre exigir admin.
+            </p>
+          </div>
+          {isAdmin && (
+            <button
+              onClick={saveBiz}
+              disabled={saving}
+              className="btn-primary"
+            >
+              {saving ? "…" : "Salvar empresa"}
+            </button>
+          )}
         </div>
 
-        {error && <p className="text-red-700 text-sm">{error}</p>}
-        {msg && <p className="text-green-700 text-sm">{msg}</p>}
+        <div className="card space-y-3">
+          <h2 className="font-bold text-coco-900">Produto</h2>
+          <div>
+            <label className="label">Nome</label>
+            <input
+              className="input"
+              value={productName}
+              onChange={(e) => setProductName(e.target.value)}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Preço padrão</label>
+              <input
+                type="number"
+                step="0.01"
+                className="input text-2xl font-bold"
+                value={price}
+                onChange={(e) => setPrice(parseFloat(e.target.value || "0"))}
+              />
+              <p className="text-xs text-coco-600 mt-1">
+                Atual: {brl(Number(settings?.unit_price ?? 0))}
+              </p>
+            </div>
+            <div>
+              <label className="label">Estoque mínimo (alerta)</label>
+              <input
+                type="number"
+                min={0}
+                className="input"
+                value={minStock}
+                onChange={(e) => setMinStock(parseInt(e.target.value || "0"))}
+              />
+              <p className="text-xs text-coco-600 mt-1">
+                Aparece alerta quando o saldo cair abaixo deste valor.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={saveProduct}
+            disabled={saving}
+            className="btn-primary"
+          >
+            {saving ? "…" : "Salvar produto"}
+          </button>
+        </div>
+      </div>
 
-        <button onClick={save} disabled={saving} className="btn-primary">
-          {saving ? "Salvando…" : "Salvar"}
-        </button>
+      <div className="card">
+        <h2 className="font-bold text-coco-900 mb-2">Notificações</h2>
+        <PushOptIn />
       </div>
     </div>
   );

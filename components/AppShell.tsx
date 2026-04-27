@@ -3,6 +3,8 @@
 import { usePathname } from "next/navigation";
 import Sidebar from "./Sidebar";
 import MobileNav from "./MobileNav";
+import OfflineSync from "./OfflineSync";
+import Reminders from "./Reminders";
 
 const FULLSCREEN_PATHS = ["/login", "/recibo"];
 
@@ -19,8 +21,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <Sidebar />
       <MobileNav />
       <main className="flex-1 p-4 md:p-10 max-w-7xl mx-auto w-full pt-20 md:pt-10">
+        <Reminders />
         {children}
       </main>
+      <OfflineSync />
     </div>
   );
 }

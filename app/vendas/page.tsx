@@ -6,6 +6,7 @@ import { brl } from "@/lib/format";
 import type { Customer, PaymentMethod, ProductSettings } from "@/lib/types";
 import PaymentModal from "@/components/PaymentModal";
 import { useToast } from "@/components/Toast";
+import { enqueueSale } from "@/lib/offlineQueue";
 
 export default function VendasPage() {
   const supabase = createClient();
@@ -24,6 +25,10 @@ export default function VendasPage() {
   const [openSaleId, setOpenSaleId] = useState<string | null>(null);
   const [openSaleTotal, setOpenSaleTotal] = useState<number>(0);
   const [openSaleHasCustomer, setOpenSaleHasCustomer] = useState<boolean>(false);
+  const [customerBalance, setCustomerBalance] = useState<{
+    open_balance: number;
+    credit_limit: number | null;
+  } | null>(null);
 
   const subtotal = useMemo(
     () => Number((unitPrice * quantity).toFixed(2)),
@@ -59,6 +64,21 @@ export default function VendasPage() {
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    if (!customerId) {
+      setCustomerBalance(null);
+      return;
+    }
+    supabase
+      .from("customer_balances")
+      .select("open_balance, credit_limit")
+      .eq("customer_id", customerId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) setCustomerBalance(data as any);
+      });
+  }, [customerId, supabase]);
 
   async function finalizeSale() {
     if (quantity <= 0) return toast.error("Quantidade deve ser maior que zero.");
@@ -96,20 +116,34 @@ export default function VendasPage() {
     if (quantity <= 0) return toast.error("Quantidade deve ser maior que zero.");
     if (unitPrice <= 0) return toast.error("Valor unitário inválido.");
     setSavingSale(true);
+    const payload = {
+      customer_id: customerId,
+      quantity,
+      unit_price: unitPrice,
+      discount,
+      total,
+      notes: notes ? `${notes} · fiado` : "fiado",
+    };
     try {
-      const { error } = await supabase.from("sales").insert({
-        customer_id: customerId,
-        quantity,
-        unit_price: unitPrice,
-        discount,
-        total,
-        notes: notes ? `${notes} · fiado` : "fiado",
-      });
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        await enqueueSale(payload);
+        toast.warn(`Sem conexão — venda enfileirada (${brl(total)}).`);
+        reset();
+        return;
+      }
+      const { error } = await supabase.from("sales").insert(payload);
       if (error) throw error;
       toast.success(`Venda fiada de ${brl(total)} lançada.`);
       reset();
     } catch (e: any) {
-      toast.error(e.message ?? String(e));
+      // tentou enviar mas falhou (provavelmente rede): enfileira
+      try {
+        await enqueueSale(payload);
+        toast.warn(`Falhou online — venda enfileirada (${brl(total)}).`);
+        reset();
+      } catch {
+        toast.error(e.message ?? String(e));
+      }
     } finally {
       setSavingSale(false);
     }
@@ -259,6 +293,29 @@ export default function VendasPage() {
               placeholder="Ex.: entrega na praia, troco para R$ 100…"
             />
           </div>
+
+          {customerBalance && (
+            <div className="flex items-center justify-between text-sm rounded-xl border border-coco-200 px-3 py-2 bg-coco-50">
+              <span>
+                Saldo em aberto deste cliente:{" "}
+                <strong>{brl(Number(customerBalance.open_balance))}</strong>
+                {customerBalance.credit_limit != null && (
+                  <>
+                    {" "}
+                    · limite{" "}
+                    <strong>{brl(Number(customerBalance.credit_limit))}</strong>
+                  </>
+                )}
+              </span>
+              {customerBalance.credit_limit != null &&
+                Number(customerBalance.open_balance) + total >
+                  Number(customerBalance.credit_limit) && (
+                  <span className="text-amber-700 font-semibold">
+                    ⚠ Esta venda fiada excede o limite
+                  </span>
+                )}
+            </div>
+          )}
         </div>
 
         <div className="card flex flex-col">

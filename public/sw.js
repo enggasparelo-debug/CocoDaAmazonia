@@ -1,4 +1,4 @@
-const CACHE = "coco-shell-v1";
+const CACHE = "coco-shell-v2";
 const SHELL = ["/", "/login", "/manifest.json", "/icons/icon.svg"];
 
 self.addEventListener("install", (e) => {
@@ -21,7 +21,6 @@ self.addEventListener("activate", (e) => {
   self.clients.claim();
 });
 
-// network-first, cache fallback. Apenas GET; nunca cacheia chamadas ao Supabase.
 self.addEventListener("fetch", (e) => {
   const req = e.request;
   if (req.method !== "GET") return;
@@ -38,3 +37,46 @@ self.addEventListener("fetch", (e) => {
       .catch(() => caches.match(req).then((r) => r || caches.match("/")))
   );
 });
+
+self.addEventListener("push", (e) => {
+  let data = { title: "Coco da Amazônia", body: "Você tem um aviso." };
+  try {
+    if (e.data) data = { ...data, ...e.data.json() };
+  } catch (_) {}
+  e.waitUntil(
+    self.registration.showNotification(data.title, {
+      body: data.body,
+      icon: "/icons/icon.svg",
+      badge: "/icons/icon.svg",
+      data: { url: data.url || "/" },
+    })
+  );
+});
+
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || "/";
+  e.waitUntil(
+    self.clients.matchAll({ type: "window" }).then((wins) => {
+      const win = wins[0];
+      if (win) {
+        win.navigate(url);
+        win.focus();
+      } else {
+        self.clients.openWindow(url);
+      }
+    })
+  );
+});
+
+// Trigger background sync da fila offline
+self.addEventListener("sync", (e) => {
+  if (e.tag === "flush-sales-queue") {
+    e.waitUntil(notifyClientsToFlush());
+  }
+});
+
+async function notifyClientsToFlush() {
+  const wins = await self.clients.matchAll();
+  wins.forEach((c) => c.postMessage({ type: "flush-sales-queue" }));
+}

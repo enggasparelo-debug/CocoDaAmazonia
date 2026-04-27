@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { brl } from "@/lib/format";
 import type { Customer, Sale } from "@/lib/types";
 import { useToast } from "./Toast";
+import { useTenant } from "@/lib/useTenant";
 
 export default function SaleEditor({
   sale,
@@ -19,6 +20,7 @@ export default function SaleEditor({
 }) {
   const supabase = createClient();
   const toast = useToast();
+  const { tenant, isAdmin } = useTenant();
   const [quantity, setQuantity] = useState(sale.quantity);
   const [unitPrice, setUnitPrice] = useState(Number(sale.unit_price));
   const [discount, setDiscount] = useState(Number(sale.discount));
@@ -32,8 +34,18 @@ export default function SaleEditor({
   const total = Math.max(0, +(subtotal - discount).toFixed(2));
   const isCanceled = !!sale.canceled_at;
   const minTotal = Number(sale.paid_amount);
+  const editWindowH = tenant?.edit_window_hours ?? 24;
+  const ageHours =
+    (Date.now() - new Date(sale.created_at).getTime()) / 3_600_000;
+  const outsideWindow = ageHours > editWindowH;
+  const lockedForOperator = !isAdmin && outsideWindow;
 
   async function save() {
+    if (lockedForOperator) {
+      return toast.error(
+        `Janela de edição (${editWindowH}h) expirou. Peça a um admin.`
+      );
+    }
     if (quantity <= 0) return toast.error("Quantidade inválida.");
     if (unitPrice <= 0) return toast.error("Valor unitário inválido.");
     if (total < minTotal) {
@@ -67,6 +79,11 @@ export default function SaleEditor({
   }
 
   async function cancelSale() {
+    if (lockedForOperator) {
+      return toast.error(
+        `Janela de edição (${editWindowH}h) expirou. Peça a um admin.`
+      );
+    }
     setSaving(true);
     try {
       const { error } = await supabase
@@ -122,6 +139,13 @@ export default function SaleEditor({
           <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-red-700 text-sm mb-4">
             Esta venda está cancelada
             {sale.cancel_reason && <> · motivo: {sale.cancel_reason}</>}
+          </div>
+        )}
+
+        {!isCanceled && lockedForOperator && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-amber-800 text-sm mb-4">
+            ⚠ Esta venda foi feita há {Math.floor(ageHours)}h. A janela de
+            edição é de {editWindowH}h. Apenas um admin pode editar/cancelar.
           </div>
         )}
 

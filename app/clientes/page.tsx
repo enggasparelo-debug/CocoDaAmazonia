@@ -13,6 +13,7 @@ const empty: Partial<Customer> = {
   document: "",
   address: "",
   notes: "",
+  credit_limit: null,
   active: true,
 };
 
@@ -68,6 +69,10 @@ export default function ClientesPage() {
       document: editing.document || null,
       address: editing.address || null,
       notes: editing.notes || null,
+      credit_limit:
+        editing.credit_limit != null && Number(editing.credit_limit) > 0
+          ? Number(editing.credit_limit)
+          : null,
       active: editing.active ?? true,
     };
     const op = editing.id
@@ -254,6 +259,29 @@ export default function ClientesPage() {
                     setEditing({ ...editing, address: e.target.value })
                   }
                 />
+              </div>
+              <div>
+                <label className="label">Limite de crédito (fiado)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  className="input"
+                  placeholder="Sem limite"
+                  value={editing.credit_limit ?? ""}
+                  onChange={(e) =>
+                    setEditing({
+                      ...editing,
+                      credit_limit: e.target.value
+                        ? parseFloat(e.target.value)
+                        : null,
+                    })
+                  }
+                />
+                <p className="text-xs text-coco-600 mt-1">
+                  Aviso na venda quando o saldo aberto exceder este valor.
+                  Deixe vazio para sem limite.
+                </p>
               </div>
               <div>
                 <label className="label">Observações</label>
