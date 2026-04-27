@@ -329,7 +329,8 @@ create trigger trg_check_credit_limit
   for each row execute function public.check_credit_limit();
 
 -- ---------- 9. View customer_balances com aging + limite ----
-create or replace view public.customer_balances as
+drop view if exists public.customer_balances cascade;
+create view public.customer_balances as
 select
   c.id   as customer_id,
   c.name as customer_name,
@@ -343,7 +344,8 @@ left join public.sales s on s.customer_id = c.id and s.canceled_at is null
 group by c.id, c.name, c.tenant_id, c.credit_limit;
 
 -- ---------- 10. View de inventário por tenant ---------------
-create or replace view public.inventory_balance as
+drop view if exists public.inventory_balance cascade;
+create view public.inventory_balance as
 select
   t.id as tenant_id,
   (

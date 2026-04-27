@@ -448,7 +448,8 @@ create policy push_subs_owner on public.push_subscriptions
   for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
 
 -- ---------- 16. Views finais --------------------------------
-create or replace view public.customer_balances as
+drop view if exists public.customer_balances cascade;
+create view public.customer_balances as
 select
   c.id   as customer_id,
   c.name as customer_name,
@@ -461,7 +462,8 @@ from public.customers c
 left join public.sales s on s.customer_id = c.id and s.canceled_at is null
 group by c.id, c.name, c.tenant_id, c.credit_limit;
 
-create or replace view public.inventory_balance as
+drop view if exists public.inventory_balance cascade;
+create view public.inventory_balance as
 select
   t.id as tenant_id,
   (
