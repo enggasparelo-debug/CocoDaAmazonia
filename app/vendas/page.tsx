@@ -21,6 +21,7 @@ export default function VendasPage() {
 
   const [openSaleId, setOpenSaleId] = useState<string | null>(null);
   const [openSaleTotal, setOpenSaleTotal] = useState<number>(0);
+  const [openSaleHasCustomer, setOpenSaleHasCustomer] = useState<boolean>(false);
 
   const total = useMemo(
     () => Number((unitPrice * quantity).toFixed(2)),
@@ -73,6 +74,34 @@ export default function VendasPage() {
       if (error) throw error;
       setOpenSaleId(data.id);
       setOpenSaleTotal(Number(data.total));
+      setOpenSaleHasCustomer(!!data.customer_id);
+    } catch (e: any) {
+      setError(e.message ?? String(e));
+    } finally {
+      setSavingSale(false);
+    }
+  }
+
+  async function lancarFiado() {
+    setError(null);
+    if (!customerId) {
+      setError("Para lançar como fiado, selecione um cliente.");
+      return;
+    }
+    if (quantity <= 0) return setError("Quantidade deve ser maior que zero.");
+    if (unitPrice <= 0) return setError("Valor unitário inválido.");
+    setSavingSale(true);
+    try {
+      const { error } = await supabase.from("sales").insert({
+        customer_id: customerId,
+        quantity,
+        unit_price: unitPrice,
+        total,
+        notes: notes ? `${notes} · fiado` : "fiado",
+      });
+      if (error) throw error;
+      reset();
+      alert(`Venda fiada de ${brl(total)} lançada em conta corrente.`);
     } catch (e: any) {
       setError(e.message ?? String(e));
     } finally {
@@ -86,6 +115,7 @@ export default function VendasPage() {
     setNotes("");
     setOpenSaleId(null);
     setOpenSaleTotal(0);
+    setOpenSaleHasCustomer(false);
     if (settings) setUnitPrice(Number(settings.unit_price));
   }
 
@@ -212,6 +242,18 @@ export default function VendasPage() {
           >
             {savingSale ? "Salvando…" : "Finalizar Venda →"}
           </button>
+          <button
+            onClick={lancarFiado}
+            disabled={savingSale || !customerId}
+            className="btn-secondary mt-2"
+            title={
+              !customerId
+                ? "Selecione um cliente para lançar como fiado"
+                : "Lança a venda como fiado, sem abrir o modal de pagamento"
+            }
+          >
+            📒 Lançar como Fiado
+          </button>
           <button onClick={reset} className="btn-ghost mt-2">
             Limpar
           </button>
@@ -223,6 +265,7 @@ export default function VendasPage() {
           saleId={openSaleId}
           total={openSaleTotal}
           methods={methods}
+          hasCustomer={openSaleHasCustomer}
           onClose={() => {
             reset();
           }}

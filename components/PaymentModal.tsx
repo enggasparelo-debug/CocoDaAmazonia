@@ -14,11 +14,13 @@ export default function PaymentModal({
   saleId,
   total,
   methods,
+  hasCustomer,
   onClose,
 }: {
   saleId: string;
   total: number;
   methods: PaymentMethod[];
+  hasCustomer: boolean;
   onClose: () => void;
 }) {
   const supabase = createClient();
@@ -26,6 +28,11 @@ export default function PaymentModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+
+  const cashMethods = useMemo(
+    () => methods.filter((m) => !m.is_credit),
+    [methods]
+  );
 
   const paid = useMemo(
     () => entries.reduce((s, e) => s + (Number(e.amount) || 0), 0),
@@ -52,26 +59,27 @@ export default function PaymentModal({
 
   async function confirm() {
     setError(null);
+    if (remaining > 0 && !hasCustomer) {
+      setError(
+        "Para deixar saldo em aberto (fiado), volte e selecione um cliente."
+      );
+      return;
+    }
     setSaving(true);
     try {
       const valid = entries.filter(
         (e) => e.payment_method_id && Number(e.amount) > 0
       );
-      if (valid.length === 0) {
-        // permitir confirmar como totalmente fiado: sem pagamentos
-        setDone(true);
-        return;
-      }
-      const { error } = await supabase
-        .from("sale_payments")
-        .insert(
+      if (valid.length > 0) {
+        const { error } = await supabase.from("sale_payments").insert(
           valid.map((e) => ({
             sale_id: saleId,
             payment_method_id: e.payment_method_id,
             amount: Number(e.amount),
           }))
         );
-      if (error) throw error;
+        if (error) throw error;
+      }
       setDone(true);
     } catch (e: any) {
       setError(e.message ?? String(e));
@@ -106,7 +114,9 @@ export default function PaymentModal({
                 </div>
               </div>
               <div className="card !p-3">
-                <div className="text-xs text-coco-700">Restante</div>
+                <div className="text-xs text-coco-700">
+                  {remaining > 0 ? "Fiado (a receber)" : "Restante"}
+                </div>
                 <div
                   className={`text-xl font-bold ${
                     remaining > 0 ? "text-amber-700" : "text-green-700"
@@ -119,23 +129,23 @@ export default function PaymentModal({
 
             <div className="mb-4">
               <div className="text-sm font-semibold text-coco-800 mb-2">
-                Forma de pagamento
+                Formas de pagamento à vista
               </div>
               <div className="flex flex-wrap gap-2">
-                {methods.map((m) => (
+                {cashMethods.map((m) => (
                   <button
                     key={m.id}
                     onClick={() => quickPay(m.id)}
                     className="btn-secondary"
-                    title={m.is_credit ? "Venda a prazo / Fiado" : ""}
                   >
-                    {m.is_credit ? "📒" : "💳"} {m.name}
+                    💳 {m.name}
                   </button>
                 ))}
               </div>
-              <p className="text-xs text-coco-600 mt-1">
+              <p className="text-xs text-coco-600 mt-2">
                 Toque uma forma para lançar o restante. Você pode adicionar
-                várias (split).
+                várias (split). O que <strong>não</strong> for lançado fica em
+                aberto (fiado) na conta do cliente.
               </p>
             </div>
 
@@ -161,7 +171,7 @@ export default function PaymentModal({
                           }
                           className="input"
                         >
-                          {methods.map((m) => (
+                          {cashMethods.map((m) => (
                             <option key={m.id} value={m.id}>
                               {m.name}
                             </option>
@@ -195,6 +205,28 @@ export default function PaymentModal({
               </table>
             )}
 
+            {remaining > 0 && (
+              <div
+                className={`text-sm rounded-xl p-3 mb-3 border ${
+                  hasCustomer
+                    ? "bg-amber-50 border-amber-200 text-amber-800"
+                    : "bg-red-50 border-red-200 text-red-700"
+                }`}
+              >
+                {hasCustomer ? (
+                  <>
+                    📒 Restará <strong>{brl(remaining)}</strong> em aberto
+                    (fiado) na conta do cliente.
+                  </>
+                ) : (
+                  <>
+                    ⚠️ Para deixar saldo em aberto (fiado) é preciso{" "}
+                    <strong>selecionar um cliente</strong> na tela anterior.
+                  </>
+                )}
+              </div>
+            )}
+
             {error && (
               <div className="text-red-700 text-sm bg-red-50 border border-red-200 rounded-xl p-3 mb-3">
                 {error}
@@ -207,13 +239,13 @@ export default function PaymentModal({
               </button>
               <button
                 onClick={confirm}
-                disabled={saving}
+                disabled={saving || (remaining > 0 && !hasCustomer)}
                 className="btn-primary"
               >
                 {saving
                   ? "Salvando…"
                   : remaining > 0
-                  ? "Confirmar (deixar saldo em aberto)"
+                  ? `Confirmar — ${brl(remaining)} fiado`
                   : "Confirmar pagamento"}
               </button>
             </div>
@@ -222,12 +254,13 @@ export default function PaymentModal({
           <div className="text-center py-6">
             <div className="text-5xl mb-3">🥥✅</div>
             <p className="text-coco-700 mb-6">
-              Venda salva. Saldo total: {brl(total)} · Recebido: {brl(paid)}
+              Venda salva. Total: {brl(total)} · Recebido: {brl(paid)}
               {remaining > 0 && (
                 <>
                   {" "}
-                  · <strong className="text-amber-700">
-                    Em aberto: {brl(remaining)}
+                  ·{" "}
+                  <strong className="text-amber-700">
+                    Fiado: {brl(remaining)}
                   </strong>
                 </>
               )}
