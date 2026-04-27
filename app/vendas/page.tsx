@@ -5,27 +5,33 @@ import { createClient } from "@/lib/supabase/client";
 import { brl } from "@/lib/format";
 import type { Customer, PaymentMethod, ProductSettings } from "@/lib/types";
 import PaymentModal from "@/components/PaymentModal";
+import { useToast } from "@/components/Toast";
 
 export default function VendasPage() {
   const supabase = createClient();
+  const toast = useToast();
   const [settings, setSettings] = useState<ProductSettings | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
 
   const [unitPrice, setUnitPrice] = useState<number>(0);
   const [quantity, setQuantity] = useState<number>(1);
+  const [discount, setDiscount] = useState<number>(0);
   const [customerId, setCustomerId] = useState<string>("");
   const [notes, setNotes] = useState<string>("");
   const [savingSale, setSavingSale] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const [openSaleId, setOpenSaleId] = useState<string | null>(null);
   const [openSaleTotal, setOpenSaleTotal] = useState<number>(0);
   const [openSaleHasCustomer, setOpenSaleHasCustomer] = useState<boolean>(false);
 
-  const total = useMemo(
+  const subtotal = useMemo(
     () => Number((unitPrice * quantity).toFixed(2)),
     [unitPrice, quantity]
+  );
+  const total = useMemo(
+    () => Math.max(0, +(subtotal - (Number(discount) || 0)).toFixed(2)),
+    [subtotal, discount]
   );
 
   async function loadData() {
@@ -55,9 +61,9 @@ export default function VendasPage() {
   }, []);
 
   async function finalizeSale() {
-    setError(null);
-    if (quantity <= 0) return setError("Quantidade deve ser maior que zero.");
-    if (unitPrice <= 0) return setError("Valor unitário inválido.");
+    if (quantity <= 0) return toast.error("Quantidade deve ser maior que zero.");
+    if (unitPrice <= 0) return toast.error("Valor unitário inválido.");
+    if (discount > subtotal) return toast.error("Desconto maior que o subtotal.");
     setSavingSale(true);
     try {
       const { data, error } = await supabase
@@ -66,6 +72,7 @@ export default function VendasPage() {
           customer_id: customerId || null,
           quantity,
           unit_price: unitPrice,
+          discount,
           total,
           notes: notes || null,
         })
@@ -76,34 +83,33 @@ export default function VendasPage() {
       setOpenSaleTotal(Number(data.total));
       setOpenSaleHasCustomer(!!data.customer_id);
     } catch (e: any) {
-      setError(e.message ?? String(e));
+      toast.error(e.message ?? String(e));
     } finally {
       setSavingSale(false);
     }
   }
 
   async function lancarFiado() {
-    setError(null);
     if (!customerId) {
-      setError("Para lançar como fiado, selecione um cliente.");
-      return;
+      return toast.error("Selecione um cliente para lançar como fiado.");
     }
-    if (quantity <= 0) return setError("Quantidade deve ser maior que zero.");
-    if (unitPrice <= 0) return setError("Valor unitário inválido.");
+    if (quantity <= 0) return toast.error("Quantidade deve ser maior que zero.");
+    if (unitPrice <= 0) return toast.error("Valor unitário inválido.");
     setSavingSale(true);
     try {
       const { error } = await supabase.from("sales").insert({
         customer_id: customerId,
         quantity,
         unit_price: unitPrice,
+        discount,
         total,
         notes: notes ? `${notes} · fiado` : "fiado",
       });
       if (error) throw error;
+      toast.success(`Venda fiada de ${brl(total)} lançada.`);
       reset();
-      alert(`Venda fiada de ${brl(total)} lançada em conta corrente.`);
     } catch (e: any) {
-      setError(e.message ?? String(e));
+      toast.error(e.message ?? String(e));
     } finally {
       setSavingSale(false);
     }
@@ -111,6 +117,7 @@ export default function VendasPage() {
 
   function reset() {
     setQuantity(1);
+    setDiscount(0);
     setCustomerId("");
     setNotes("");
     setOpenSaleId(null);
@@ -123,9 +130,33 @@ export default function VendasPage() {
     setQuantity((q) => Math.max(1, q + delta));
   }
 
+  // Atalhos de teclado
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement)?.tagName;
+      const isField = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+      if (e.key === "+" && !isField) {
+        adjustQty(1);
+        e.preventDefault();
+      } else if (e.key === "-" && !isField) {
+        adjustQty(-1);
+        e.preventDefault();
+      } else if (e.key === "F2") {
+        e.preventDefault();
+        lancarFiado();
+      } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        finalizeSale();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quantity, unitPrice, discount, customerId, notes]);
+
   return (
     <div className="space-y-6">
-      <header className="flex items-center justify-between">
+      <header className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-3xl font-bold text-coco-900">Venda Rápida</h1>
           <p className="text-coco-600">
@@ -133,22 +164,20 @@ export default function VendasPage() {
             <strong>{brl(Number(settings?.unit_price ?? 0))}</strong>
           </p>
         </div>
-      </header>
-
-      {error && (
-        <div className="card border-red-300 bg-red-50 text-red-700">
-          {error}
+        <div className="text-xs text-coco-600">
+          Atalhos: + / − qtd · F2 fiado · Ctrl+Enter finalizar
         </div>
-      )}
+      </header>
 
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="card lg:col-span-2 space-y-5">
           <div>
             <label className="label">Quantidade</label>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <button
                 className="btn-secondary text-2xl w-14 h-14"
                 onClick={() => adjustQty(-1)}
+                aria-label="Diminuir"
               >
                 −
               </button>
@@ -162,6 +191,7 @@ export default function VendasPage() {
               <button
                 className="btn-secondary text-2xl w-14 h-14"
                 onClick={() => adjustQty(1)}
+                aria-label="Aumentar"
               >
                 +
               </button>
@@ -179,7 +209,7 @@ export default function VendasPage() {
             </div>
           </div>
 
-          <div className="grid sm:grid-cols-2 gap-4">
+          <div className="grid sm:grid-cols-3 gap-4">
             <div>
               <label className="label">Valor unitário (R$)</label>
               <input
@@ -191,9 +221,17 @@ export default function VendasPage() {
                 }
                 className="input text-xl font-semibold"
               />
-              <p className="text-xs text-coco-600 mt-1">
-                Pode ser ajustado pelo operador antes de finalizar.
-              </p>
+            </div>
+            <div>
+              <label className="label">Desconto (R$)</label>
+              <input
+                type="number"
+                step="0.01"
+                min={0}
+                value={discount}
+                onChange={(e) => setDiscount(parseFloat(e.target.value || "0"))}
+                className="input text-xl font-semibold"
+              />
             </div>
             <div>
               <label className="label">Cliente (opcional)</label>
@@ -209,9 +247,6 @@ export default function VendasPage() {
                   </option>
                 ))}
               </select>
-              <p className="text-xs text-coco-600 mt-1">
-                Selecione um cliente cadastrado para vendas a prazo.
-              </p>
             </div>
           </div>
 
@@ -227,8 +262,15 @@ export default function VendasPage() {
         </div>
 
         <div className="card flex flex-col">
-          <div className="text-coco-700 text-sm">Total</div>
-          <div className="text-5xl font-extrabold text-coco-900 my-3">
+          <div className="text-coco-700 text-sm">Subtotal</div>
+          <div className="text-2xl text-coco-800">{brl(subtotal)}</div>
+          {discount > 0 && (
+            <div className="text-amber-700 text-sm mt-1">
+              − Desconto {brl(discount)}
+            </div>
+          )}
+          <div className="text-coco-700 text-sm mt-3">Total</div>
+          <div className="text-5xl font-extrabold text-coco-900 mb-3">
             {brl(total)}
           </div>
           <div className="text-coco-700 text-sm">
@@ -249,10 +291,10 @@ export default function VendasPage() {
             title={
               !customerId
                 ? "Selecione um cliente para lançar como fiado"
-                : "Lança a venda como fiado, sem abrir o modal de pagamento"
+                : "Lança a venda direto como fiado"
             }
           >
-            📒 Lançar como Fiado
+            📒 Lançar como Fiado (F2)
           </button>
           <button onClick={reset} className="btn-ghost mt-2">
             Limpar

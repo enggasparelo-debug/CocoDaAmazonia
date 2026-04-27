@@ -125,42 +125,95 @@ function ReceberInner() {
             </p>
           ) : (
             <ul className="space-y-1">
-              {balances.map((b) => (
-                <li key={b.customer_id}>
-                  <button
-                    onClick={() => setSelected(b.customer_id)}
-                    className={`w-full text-left px-3 py-2 rounded-xl flex items-center justify-between ${
-                      selected === b.customer_id
-                        ? "bg-coco-600 text-white"
-                        : "hover:bg-coco-50"
-                    }`}
-                  >
-                    <span>{b.customer_name}</span>
-                    <span className="font-semibold">
-                      {brl(Number(b.open_balance))}
-                    </span>
-                  </button>
-                </li>
-              ))}
+              {balances.map((b) => {
+                const days = b.oldest_open_at
+                  ? Math.floor(
+                      (Date.now() - new Date(b.oldest_open_at).getTime()) /
+                        86400000
+                    )
+                  : 0;
+                const overdue = days > 30;
+                return (
+                  <li key={b.customer_id}>
+                    <button
+                      onClick={() => setSelected(b.customer_id)}
+                      className={`w-full text-left px-3 py-2 rounded-xl flex items-center justify-between ${
+                        selected === b.customer_id
+                          ? "bg-coco-600 text-white"
+                          : "hover:bg-coco-50"
+                      }`}
+                    >
+                      <span>
+                        {b.customer_name}
+                        {overdue && (
+                          <span
+                            className={`ml-2 text-xs font-semibold ${
+                              selected === b.customer_id
+                                ? "text-amber-200"
+                                : "text-amber-700"
+                            }`}
+                          >
+                            ⚠ {days}d
+                          </span>
+                        )}
+                      </span>
+                      <span className="font-semibold">
+                        {brl(Number(b.open_balance))}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
 
         <div className="card lg:col-span-2">
-          <div className="mb-3">
-            <label className="label">Cliente</label>
-            <select
-              className="input"
-              value={selected}
-              onChange={(e) => setSelected(e.target.value)}
-            >
-              <option value="">— selecione —</option>
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
+          <div className="mb-3 flex flex-wrap items-end gap-2">
+            <div className="flex-1 min-w-[200px]">
+              <label className="label">Cliente</label>
+              <select
+                className="input"
+                value={selected}
+                onChange={(e) => setSelected(e.target.value)}
+              >
+                <option value="">— selecione —</option>
+                {customers.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {selected && (() => {
+              const cust = customers.find((c) => c.id === selected);
+              const bal = balances.find((b) => b.customer_id === selected);
+              const phone = cust?.phone?.replace(/\D/g, "") || "";
+              const wa = phone
+                ? `https://wa.me/55${phone}?text=${encodeURIComponent(
+                    `Olá ${cust?.name}! Saldo da sua conta na Coco da Amazônia: ${brl(
+                      Number(bal?.open_balance ?? 0)
+                    )}.`
+                  )}`
+                : null;
+              return (
+                <div className="flex gap-2">
+                  {wa && (
+                    <a
+                      href={wa}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn-secondary"
+                    >
+                      📲 WhatsApp
+                    </a>
+                  )}
+                  <a href={`/clientes/${selected}`} className="btn-ghost">
+                    Histórico
+                  </a>
+                </div>
+              );
+            })()}
           </div>
 
           {!selected ? (

@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/client";
 import { brl, fmtDate } from "@/lib/format";
 import type { Customer, PaymentMethod, Sale } from "@/lib/types";
 import StatusBadge from "@/components/StatusBadge";
+import SaleEditor from "@/components/SaleEditor";
+import Link from "next/link";
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
@@ -35,6 +37,7 @@ export default function RelatoriosPage() {
     { sale_id: string; amount: number; payment_method_id: string }[]
   >([]);
   const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState<Sale | null>(null);
 
   async function loadAux() {
     const [c, m] = await Promise.all([
@@ -272,11 +275,12 @@ export default function RelatoriosPage() {
                 <th>Total</th>
                 <th>Pago</th>
                 <th>Status</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
               {sales.map((s) => (
-                <tr key={s.id}>
+                <tr key={s.id} className={s.status === "cancelada" ? "opacity-60" : ""}>
                   <td>{fmtDate(s.created_at)}</td>
                   <td>
                     {s.customer_id
@@ -290,12 +294,39 @@ export default function RelatoriosPage() {
                   <td>
                     <StatusBadge status={s.status} />
                   </td>
+                  <td className="text-right whitespace-nowrap">
+                    <Link
+                      href={`/recibo/${s.id}`}
+                      target="_blank"
+                      className="btn-ghost text-xs px-2"
+                    >
+                      🧾
+                    </Link>
+                    <button
+                      onClick={() => setEditing(s)}
+                      className="btn-ghost text-xs px-2"
+                    >
+                      ✏️
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
       </div>
+
+      {editing && (
+        <SaleEditor
+          sale={editing}
+          customers={customers}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            loadReport();
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -1,50 +1,71 @@
 # 🥥 Coco da Amazônia · Controle de Vendas
 
-Aplicativo web para controle de vendas de **coco verde** (produto único), com:
+Sistema completo para controle de venda de coco verde (produto único), com:
 
-- **Venda rápida** (PDV) com botões de quantidade e preço editável pelo operador.
-- **Modal de pagamento** após finalizar a venda, aceitando **Pix, Dinheiro, Cartão** e qualquer forma cadastrada — incluindo **split** (parte em uma forma, parte em outra) e **venda a prazo (fiado)**.
-- **Cadastro de clientes** com saldo aberto.
-- **Cadastro de formas de pagamento** (ative/desative o que quiser).
-- **Contas a receber**: lista de clientes com fiado e lançamento de recebimentos.
-- **Financeiro**: fluxo de recebimentos por forma e período.
-- **Relatórios**: vendas com filtros (período, cliente, status), totais e exportação CSV.
-- **Configurações**: nome do produto e preço padrão.
+- 🔐 **Login** (Supabase Auth) — RLS por usuário autenticado
+- 🥥 **Venda rápida** com preço editável, **desconto**, atalhos de teclado (`+/-`, F2, Ctrl+Enter), botão direto **"Lançar como Fiado"**
+- 💳 **Pagamento múltiplo** (split Pix + Dinheiro + Cartão) e suporte a saldo em aberto (fiado)
+- 🧾 **Comprovante** imprimível ou compartilhável
+- 📲 **WhatsApp do saldo** — envia mensagem pronta com o débito
+- ✏️ **Editar / cancelar venda** (com motivo) e reverter cancelamento
+- 📒 **Contas a receber** com **aging** (alerta para fiado > 30 dias)
+- 👤 **Histórico do cliente** — todas as compras, pagamentos e saldo
+- 💵 **Caixa** — abertura, suprimento, sangria, fechamento com diferença
+- 💸 **Despesas** por categoria
+- 📦 **Estoque** com entrada por compra, perda, ajuste e baixa automática nas vendas
+- 📊 **Painel** com gráfico dos últimos 7 dias, lucro estimado, estoque, status do caixa
+- 📈 **Relatórios** com filtros + export CSV
+- 📱 **PWA** — instalável no celular, funciona com cache do service worker
+- 🌗 **Toasts**, modais de confirmação, menu mobile e skeletons
 
-Stack: **Next.js 14 (App Router) + TypeScript + Tailwind CSS + Supabase**, pronto para deploy no **Vercel**.
+Stack: **Next.js 14 (App Router) + TypeScript + Tailwind CSS + Supabase** · deploy: **Vercel**.
 
 ---
 
-## 1. Configurar o Supabase
+## Setup rápido
 
-1. Crie um projeto em <https://supabase.com>.
-2. Abra o **SQL Editor** e execute o arquivo [`supabase/schema.sql`](./supabase/schema.sql) (cria tabelas, view, triggers, formas de pagamento padrão e o produto inicial "Coco Verde" a R$ 5,00).
-3. Em **Project Settings → API**, copie:
-   - `Project URL` → `NEXT_PUBLIC_SUPABASE_URL`
-   - `anon public key` → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+### 1. Supabase
 
-> O schema já habilita RLS com policies abertas (`anon all`) para uso interno. Em produção, troque por policies baseadas em `auth.uid()` e use Supabase Auth.
+Crie um projeto em https://supabase.com e rode o SQL apropriado no **SQL Editor**:
 
-## 2. Rodar localmente
+- **Instalação nova:** rode `supabase/schema.sql` (idempotente — pode ser rodado em banco vazio).
+- **Banco já existente em v1:** rode **`supabase/migration_v2.sql`** para acrescentar caixa, despesas, estoque, desconto, cancelamento, validações e RLS por usuário.
+
+Em **Authentication → Providers**, ative *Email + Password* (já vem ativo por padrão).
+
+> Se quiser bloquear cadastro público, vá em *Authentication → Settings → Sign up* e desative o *Allow new users to sign up* depois de criar o seu usuário.
+
+Em **Project Settings → API**, copie:
+- **Project URL** → `NEXT_PUBLIC_SUPABASE_URL`
+- **anon public key** → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+
+### 2. Local
 
 ```bash
 cp .env.example .env.local
-# preencha as duas variáveis com os valores do Supabase
-
 npm install
 npm run dev
 ```
 
-Acesse <http://localhost:3000>.
+Acesse http://localhost:3000, crie sua conta e use.
 
-## 3. Deploy no Vercel
+### 3. Deploy no Vercel
 
-1. Faça push deste repositório para o GitHub.
-2. Em <https://vercel.com/new>, importe o repositório.
-3. Configure as variáveis de ambiente:
-   - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-4. Deploy. O Vercel detecta o Next.js automaticamente.
+1. Push do repositório
+2. https://vercel.com/new → importar
+3. Configurar variáveis: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (Production + Preview)
+4. Deploy
+
+---
+
+## Atalhos de teclado (tela de venda)
+
+| Tecla | Ação |
+|---|---|
+| `+` | Aumentar quantidade |
+| `−` | Diminuir quantidade |
+| `F2` | Lançar como Fiado |
+| `Ctrl+Enter` (Cmd+Enter no Mac) | Finalizar venda (abre o pagamento) |
 
 ---
 
@@ -52,44 +73,50 @@ Acesse <http://localhost:3000>.
 
 ```
 app/
-  page.tsx                 # Painel
-  vendas/page.tsx          # Venda rápida + modal de pagamento
-  clientes/page.tsx        # Cadastro de clientes
+  page.tsx                 # Painel + sparkline 7 dias + lucro estimado
+  vendas/page.tsx          # Venda rápida + atalhos + desconto
+  recibo/[id]/page.tsx     # Comprovante printable
+  clientes/page.tsx
+  clientes/[id]/page.tsx   # Histórico do cliente
   formas-pagamento/page.tsx
-  receber/page.tsx         # Contas a receber (fiado)
+  receber/page.tsx         # Contas a receber + aging + WhatsApp
+  caixa/page.tsx           # Abertura/fechamento + sangria/suprimento
+  despesas/page.tsx        # Despesas por categoria
+  estoque/page.tsx         # Estoque + entradas
   financeiro/page.tsx      # Fluxo de recebimentos
-  relatorios/page.tsx      # Relatórios + export CSV
-  configuracoes/page.tsx   # Preço padrão do produto
+  relatorios/page.tsx      # Relatórios + edição/cancelamento de venda
+  configuracoes/page.tsx
+  login/page.tsx
 components/
-  Sidebar.tsx
-  PaymentModal.tsx
-  StatusBadge.tsx
+  AppShell.tsx · Sidebar.tsx · MobileNav.tsx
+  PaymentModal.tsx · SaleEditor.tsx
+  ConfirmModal.tsx · Toast.tsx · Skeleton.tsx · Sparkline.tsx
+  StatusBadge.tsx · RegisterSW.tsx
 lib/
-  supabase/{client,server}.ts
-  types.ts
-  format.ts
+  supabase/{client,server}.ts · types.ts · format.ts
+middleware.ts              # protege rotas com auth.uid()
+public/
+  manifest.json · sw.js · icons/icon.svg
 supabase/
-  schema.sql               # rode no SQL Editor do Supabase
+  schema.sql               # instalação completa
+  migration_v2.sql         # migração para bancos v1
 ```
 
-## Modelo de dados
+## Modelo de dados (resumo)
 
-| Tabela              | Função                                            |
-| ------------------- | ------------------------------------------------- |
-| `product_settings`  | Linha única com nome e preço padrão do produto.   |
-| `customers`         | Clientes (nome, telefone, documento, endereço…).  |
-| `payment_methods`   | Formas de pagamento, com flag `is_credit`.        |
-| `sales`             | Cabeçalho da venda (qtd, preço, total, status).   |
-| `sale_payments`     | Recebimentos lançados em cada venda (split/parcela). |
-| `customer_balances` | View com saldo em aberto por cliente.             |
+| Tabela | Função |
+|---|---|
+| `product_settings` | preço padrão e nome do produto |
+| `customers` | clientes |
+| `payment_methods` | formas de pagamento (com flag `is_credit`) |
+| `sales` | venda (qtd, preço, desconto, total, status, cancelamento) |
+| `sale_payments` | recebimentos vinculados à venda (suporta split) |
+| `cash_sessions` + `cash_movements` | caixa |
+| `expenses` | despesas |
+| `inventory_movements` + `inventory_balance` (view) | estoque |
+| `customer_balances` (view) | saldo aberto + venda em aberto mais antiga (aging) |
 
-Triggers em `sale_payments` recalculam automaticamente `paid_amount` e `status` (`aberta` / `parcial` / `paga`) na venda.
-
-## Fluxo típico
-
-1. **Configurações** → defina o preço do coco.
-2. **Formas de pagamento** → confira/edite Pix, Dinheiro, Cartão, Fiado…
-3. **Clientes** → cadastre quem compra a prazo.
-4. **Venda Rápida** → ajuste a quantidade, finalize, escolha as formas no modal (pode ficar saldo em aberto = fiado).
-5. **Contas a Receber** → quando o cliente pagar, lance o recebimento.
-6. **Financeiro / Relatórios** → acompanhe entradas, saldos e exporte CSV.
+Triggers automatizam:
+- `paid_amount` e `status` da venda recalculam a cada pagamento
+- Validação que pagamento não excede o total da venda
+- Bloqueio de pagamento em venda cancelada

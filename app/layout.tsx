@@ -1,10 +1,24 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
-import Sidebar from "@/components/Sidebar";
+import AppShell from "@/components/AppShell";
+import { ToastProvider } from "@/components/Toast";
+import RegisterSW from "@/components/RegisterSW";
 
 export const metadata: Metadata = {
   title: "Coco da Amazônia · Controle de Vendas",
   description: "Sistema de controle de vendas de coco verde",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    title: "Coco da Amazônia",
+    statusBarStyle: "default",
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#1f4d33",
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({
@@ -15,12 +29,10 @@ export default function RootLayout({
   return (
     <html lang="pt-BR">
       <body>
-        <div className="min-h-screen flex">
-          <Sidebar />
-          <main className="flex-1 p-6 md:p-10 max-w-7xl mx-auto w-full">
-            {children}
-          </main>
-        </div>
+        <ToastProvider>
+          <AppShell>{children}</AppShell>
+        </ToastProvider>
+        <RegisterSW />
       </body>
     </html>
   );

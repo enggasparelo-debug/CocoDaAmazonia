@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { PaymentMethod } from "@/lib/types";
+import ConfirmModal from "@/components/ConfirmModal";
+import { useToast } from "@/components/Toast";
 
 const empty: Partial<PaymentMethod> = {
   name: "",
@@ -12,9 +14,11 @@ const empty: Partial<PaymentMethod> = {
 
 export default function FormasPagamentoPage() {
   const supabase = createClient();
+  const toast = useToast();
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
   const [editing, setEditing] = useState<Partial<PaymentMethod> | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmToggle, setConfirmToggle] = useState<PaymentMethod | null>(null);
 
   async function load() {
     const { data } = await supabase
@@ -52,10 +56,13 @@ export default function FormasPagamentoPage() {
   }
 
   async function toggleActive(m: PaymentMethod) {
-    await supabase
+    const { error } = await supabase
       .from("payment_methods")
       .update({ active: !m.active })
       .eq("id", m.id);
+    if (error) toast.error(error.message);
+    else toast.success(m.active ? "Forma desativada." : "Forma ativada.");
+    setConfirmToggle(null);
     load();
   }
 
@@ -126,7 +133,9 @@ export default function FormasPagamentoPage() {
                       Editar
                     </button>
                     <button
-                      onClick={() => toggleActive(m)}
+                      onClick={() =>
+                        m.active ? setConfirmToggle(m) : toggleActive(m)
+                      }
                       className="btn-ghost"
                     >
                       {m.active ? "Desativar" : "Ativar"}
@@ -191,6 +200,17 @@ export default function FormasPagamentoPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {confirmToggle && (
+        <ConfirmModal
+          title="Desativar forma de pagamento?"
+          message={`A forma "${confirmToggle.name}" deixa de aparecer nas vendas, mas o histórico continua intacto.`}
+          confirmText="Desativar"
+          danger
+          onCancel={() => setConfirmToggle(null)}
+          onConfirm={() => toggleActive(confirmToggle)}
+        />
       )}
     </div>
   );

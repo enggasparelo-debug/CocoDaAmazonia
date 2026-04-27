@@ -135,7 +135,11 @@ export default function ClientesPage() {
                 const bal = balances[c.id]?.open_balance ?? 0;
                 return (
                   <tr key={c.id}>
-                    <td className="font-medium">{c.name}</td>
+                    <td className="font-medium">
+                      <Link href={`/clientes/${c.id}`} className="text-coco-800 hover:underline">
+                        {c.name}
+                      </Link>
+                    </td>
                     <td>{c.phone ?? "—"}</td>
                     <td>{c.document ?? "—"}</td>
                     <td
@@ -157,12 +161,18 @@ export default function ClientesPage() {
                         {c.active ? "ativo" : "inativo"}
                       </span>
                     </td>
-                    <td className="text-right">
+                    <td className="text-right whitespace-nowrap">
+                      <Link
+                        href={`/clientes/${c.id}`}
+                        className="btn-ghost text-sm"
+                      >
+                        Histórico
+                      </Link>
                       <Link
                         href={`/receber?cliente=${c.id}`}
                         className="btn-ghost text-sm"
                       >
-                        Recebimentos
+                        Receber
                       </Link>
                       <button
                         onClick={() => setEditing(c)}

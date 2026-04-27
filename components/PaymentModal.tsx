@@ -265,9 +265,19 @@ export default function PaymentModal({
                 </>
               )}
             </p>
-            <button onClick={onClose} className="btn-primary">
-              Nova venda
-            </button>
+            <div className="flex justify-center gap-2">
+              <a
+                href={`/recibo/${saleId}`}
+                target="_blank"
+                rel="noreferrer"
+                className="btn-secondary"
+              >
+                🧾 Imprimir comprovante
+              </a>
+              <button onClick={onClose} className="btn-primary">
+                Nova venda
+              </button>
+            </div>
           </div>
         )}
       </div>
