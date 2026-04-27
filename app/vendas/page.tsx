@@ -8,6 +8,24 @@ import PaymentModal from "@/components/PaymentModal";
 import { useToast } from "@/components/Toast";
 import { enqueueSale } from "@/lib/offlineQueue";
 
+// Aceita "3", "3,5", "3.50" etc. Retorna 0 se inválido.
+function parseBrNumber(s: string): number {
+  if (!s) return 0;
+  const norm = s.replace(/\s/g, "").replace(/\./g, "").replace(",", ".");
+  const n = parseFloat(norm);
+  return isNaN(n) ? 0 : n;
+}
+
+function fmtBrNumber(n: number): string {
+  return n.toFixed(2).replace(".", ",");
+}
+
+function nowLocalIso(): string {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 16);
+}
+
 export default function VendasPage() {
   const supabase = createClient();
   const toast = useToast();
@@ -15,11 +33,12 @@ export default function VendasPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
 
-  const [unitPrice, setUnitPrice] = useState<number>(0);
-  const [quantity, setQuantity] = useState<number>(1);
-  const [discount, setDiscount] = useState<number>(0);
+  const [quantity, setQuantity] = useState<string>("");
+  const [unitPriceStr, setUnitPriceStr] = useState<string>("");
+  const [discountStr, setDiscountStr] = useState<string>("0");
   const [customerId, setCustomerId] = useState<string>("");
   const [notes, setNotes] = useState<string>("");
+  const [saleDate, setSaleDate] = useState<string>(nowLocalIso());
   const [savingSale, setSavingSale] = useState(false);
 
   const [openSaleId, setOpenSaleId] = useState<string | null>(null);
@@ -30,12 +49,20 @@ export default function VendasPage() {
     credit_limit: number | null;
   } | null>(null);
 
+  const qty = useMemo(() => {
+    const n = parseInt(quantity || "0", 10);
+    return isNaN(n) ? 0 : n;
+  }, [quantity]);
+
+  const unitPrice = useMemo(() => parseBrNumber(unitPriceStr), [unitPriceStr]);
+  const discount = useMemo(() => parseBrNumber(discountStr), [discountStr]);
+
   const subtotal = useMemo(
-    () => Number((unitPrice * quantity).toFixed(2)),
-    [unitPrice, quantity]
+    () => Number((qty * unitPrice).toFixed(2)),
+    [qty, unitPrice]
   );
   const total = useMemo(
-    () => Math.max(0, +(subtotal - (Number(discount) || 0)).toFixed(2)),
+    () => Math.max(0, +(subtotal - discount).toFixed(2)),
     [subtotal, discount]
   );
 
@@ -55,7 +82,8 @@ export default function VendasPage() {
     ]);
     if (s.data) {
       setSettings(s.data as ProductSettings);
-      setUnitPrice(Number(s.data.unit_price));
+      // só seta o preço unitário inicial se ainda não foi tocado
+      setUnitPriceStr((cur) => cur || fmtBrNumber(Number(s.data.unit_price)));
     }
     setCustomers((c.data as Customer[]) ?? []);
     setMethods((m.data as PaymentMethod[]) ?? []);
@@ -80,22 +108,36 @@ export default function VendasPage() {
       });
   }, [customerId, supabase]);
 
+  function buildPayload() {
+    return {
+      customer_id: customerId || null,
+      quantity: qty,
+      unit_price: unitPrice,
+      discount,
+      total,
+      notes: notes || null,
+      created_at: new Date(saleDate).toISOString(),
+    };
+  }
+
+  function validate(): string | null {
+    if (qty <= 0) return "Informe a quantidade.";
+    if (unitPrice <= 0) return "Informe o valor unitário.";
+    if (discount > subtotal) return "Desconto maior que o subtotal.";
+    if (!saleDate) return "Informe a data da venda.";
+    if (new Date(saleDate).getTime() > Date.now() + 60_000)
+      return "A data da venda não pode ser no futuro.";
+    return null;
+  }
+
   async function finalizeSale() {
-    if (quantity <= 0) return toast.error("Quantidade deve ser maior que zero.");
-    if (unitPrice <= 0) return toast.error("Valor unitário inválido.");
-    if (discount > subtotal) return toast.error("Desconto maior que o subtotal.");
+    const err = validate();
+    if (err) return toast.error(err);
     setSavingSale(true);
     try {
       const { data, error } = await supabase
         .from("sales")
-        .insert({
-          customer_id: customerId || null,
-          quantity,
-          unit_price: unitPrice,
-          discount,
-          total,
-          notes: notes || null,
-        })
+        .insert(buildPayload())
         .select("*")
         .single();
       if (error) throw error;
@@ -110,18 +152,13 @@ export default function VendasPage() {
   }
 
   async function lancarFiado() {
-    if (!customerId) {
+    if (!customerId)
       return toast.error("Selecione um cliente para lançar como fiado.");
-    }
-    if (quantity <= 0) return toast.error("Quantidade deve ser maior que zero.");
-    if (unitPrice <= 0) return toast.error("Valor unitário inválido.");
+    const err = validate();
+    if (err) return toast.error(err);
     setSavingSale(true);
     const payload = {
-      customer_id: customerId,
-      quantity,
-      unit_price: unitPrice,
-      discount,
-      total,
+      ...buildPayload(),
       notes: notes ? `${notes} · fiado` : "fiado",
     };
     try {
@@ -136,7 +173,6 @@ export default function VendasPage() {
       toast.success(`Venda fiada de ${brl(total)} lançada.`);
       reset();
     } catch (e: any) {
-      // tentou enviar mas falhou (provavelmente rede): enfileira
       try {
         await enqueueSale(payload);
         toast.warn(`Falhou online — venda enfileirada (${brl(total)}).`);
@@ -150,32 +186,21 @@ export default function VendasPage() {
   }
 
   function reset() {
-    setQuantity(1);
-    setDiscount(0);
+    setQuantity("");
+    setDiscountStr("0");
     setCustomerId("");
     setNotes("");
     setOpenSaleId(null);
     setOpenSaleTotal(0);
     setOpenSaleHasCustomer(false);
-    if (settings) setUnitPrice(Number(settings.unit_price));
+    setSaleDate(nowLocalIso());
+    if (settings) setUnitPriceStr(fmtBrNumber(Number(settings.unit_price)));
   }
 
-  function adjustQty(delta: number) {
-    setQuantity((q) => Math.max(1, q + delta));
-  }
-
-  // Atalhos de teclado
+  // Atalhos de teclado (apenas em desktop / fora dos inputs)
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      const tag = (e.target as HTMLElement)?.tagName;
-      const isField = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
-      if (e.key === "+" && !isField) {
-        adjustQty(1);
-        e.preventDefault();
-      } else if (e.key === "-" && !isField) {
-        adjustQty(-1);
-        e.preventDefault();
-      } else if (e.key === "F2") {
+      if (e.key === "F2") {
         e.preventDefault();
         lancarFiado();
       } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
@@ -186,7 +211,10 @@ export default function VendasPage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quantity, unitPrice, discount, customerId, notes]);
+  }, [quantity, unitPriceStr, discountStr, customerId, notes, saleDate]);
+
+  const selectOnFocus = (e: React.FocusEvent<HTMLInputElement>) =>
+    e.target.select();
 
   return (
     <div className="space-y-6">
@@ -199,7 +227,7 @@ export default function VendasPage() {
           </p>
         </div>
         <div className="text-xs text-coco-600">
-          Atalhos: + / − qtd · F2 fiado · Ctrl+Enter finalizar
+          Atalhos: F2 fiado · Ctrl+Enter finalizar
         </div>
       </header>
 
@@ -207,65 +235,62 @@ export default function VendasPage() {
         <div className="card lg:col-span-2 space-y-5">
           <div>
             <label className="label">Quantidade</label>
-            <div className="flex items-center gap-3 flex-wrap">
-              <button
-                className="btn-secondary text-2xl w-14 h-14"
-                onClick={() => adjustQty(-1)}
-                aria-label="Diminuir"
-              >
-                −
-              </button>
-              <input
-                type="number"
-                value={quantity}
-                min={1}
-                onChange={(e) => setQuantity(parseInt(e.target.value || "1"))}
-                className="input text-3xl text-center font-bold h-14 w-32"
-              />
-              <button
-                className="btn-secondary text-2xl w-14 h-14"
-                onClick={() => adjustQty(1)}
-                aria-label="Aumentar"
-              >
-                +
-              </button>
-              <div className="ml-auto flex flex-wrap gap-2">
-                {[5, 10, 12, 24, 50].map((n) => (
-                  <button
-                    key={n}
-                    onClick={() => setQuantity(n)}
-                    className="btn-ghost px-3 py-2"
-                  >
-                    {n}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <input
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={quantity}
+              onChange={(e) =>
+                setQuantity(e.target.value.replace(/[^0-9]/g, ""))
+              }
+              onFocus={selectOnFocus}
+              placeholder="0"
+              autoFocus
+              className="input text-4xl text-center font-bold h-16"
+            />
           </div>
 
-          <div className="grid sm:grid-cols-3 gap-4">
+          <div className="grid sm:grid-cols-2 gap-4">
             <div>
               <label className="label">Valor unitário (R$)</label>
               <input
-                type="number"
-                step="0.01"
-                value={unitPrice}
+                type="text"
+                inputMode="decimal"
+                value={unitPriceStr}
                 onChange={(e) =>
-                  setUnitPrice(parseFloat(e.target.value || "0"))
+                  setUnitPriceStr(e.target.value.replace(/[^0-9.,]/g, ""))
                 }
-                className="input text-xl font-semibold"
+                onFocus={selectOnFocus}
+                className="input text-2xl font-semibold"
               />
             </div>
             <div>
               <label className="label">Desconto (R$)</label>
               <input
-                type="number"
-                step="0.01"
-                min={0}
-                value={discount}
-                onChange={(e) => setDiscount(parseFloat(e.target.value || "0"))}
-                className="input text-xl font-semibold"
+                type="text"
+                inputMode="decimal"
+                value={discountStr}
+                onChange={(e) =>
+                  setDiscountStr(e.target.value.replace(/[^0-9.,]/g, ""))
+                }
+                onFocus={selectOnFocus}
+                className="input text-2xl font-semibold"
               />
+            </div>
+          </div>
+
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div>
+              <label className="label">Data da venda</label>
+              <input
+                type="datetime-local"
+                value={saleDate}
+                onChange={(e) => setSaleDate(e.target.value)}
+                className="input"
+              />
+              <p className="text-xs text-coco-600 mt-1">
+                Padrão: agora. Pode ajustar para registrar uma venda passada.
+              </p>
             </div>
             <div>
               <label className="label">Cliente (opcional)</label>
@@ -303,7 +328,9 @@ export default function VendasPage() {
                   <>
                     {" "}
                     · limite{" "}
-                    <strong>{brl(Number(customerBalance.credit_limit))}</strong>
+                    <strong>
+                      {brl(Number(customerBalance.credit_limit))}
+                    </strong>
                   </>
                 )}
               </span>
@@ -331,7 +358,7 @@ export default function VendasPage() {
             {brl(total)}
           </div>
           <div className="text-coco-700 text-sm">
-            {quantity} × {brl(unitPrice)}
+            {qty || 0} × {brl(unitPrice)}
           </div>
 
           <button

@@ -47,7 +47,7 @@ create table if not exists public.product_settings (
   id          uuid primary key default gen_random_uuid(),
   tenant_id   uuid references public.tenants(id) on delete cascade,
   name        text not null default 'Coco Verde',
-  unit_price  numeric(12,2) not null default 5.00,
+  unit_price  numeric(12,2) not null default 3.00,
   min_stock   integer default 0,
   updated_at  timestamptz not null default now()
 );
@@ -352,7 +352,7 @@ begin
   insert into public.memberships (user_id, tenant_id, role)
     values (new.id, v_tenant, 'admin');
   insert into public.product_settings (name, unit_price, tenant_id)
-    values ('Coco Verde', 5.00, v_tenant);
+    values ('Coco Verde', 3.00, v_tenant);
   insert into public.payment_methods (name, is_credit, tenant_id) values
     ('Dinheiro', false, v_tenant),
     ('Pix', false, v_tenant),

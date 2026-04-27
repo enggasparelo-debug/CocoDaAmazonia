@@ -114,7 +114,7 @@ begin
 
   -- copia o produto padrão e formas de pagamento
   insert into public.product_settings (name, unit_price, tenant_id)
-    values ('Coco Verde', 5.00, v_tenant);
+    values ('Coco Verde', 3.00, v_tenant);
 
   insert into public.payment_methods (name, is_credit, tenant_id) values
     ('Dinheiro', false, v_tenant),
