@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import type { ProductSettings, Tenant } from "@/lib/types";
 import { brl } from "@/lib/format";
@@ -224,6 +225,18 @@ export default function ConfiguracoesPage() {
           >
             {saving ? "…" : "Salvar produto"}
           </button>
+        </div>
+      </div>
+
+      <div className="card">
+        <h2 className="font-bold text-coco-900 mb-2">Cadastros auxiliares</h2>
+        <div className="flex flex-wrap gap-2">
+          <Link href="/configuracoes/veiculos" className="btn-secondary">
+            🚚 Veículos
+          </Link>
+          <Link href="/configuracoes/rotas" className="btn-secondary">
+            🗺️ Rotas
+          </Link>
         </div>
       </div>
 

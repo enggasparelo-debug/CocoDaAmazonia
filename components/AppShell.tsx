@@ -6,7 +6,12 @@ import MobileNav from "./MobileNav";
 import OfflineSync from "./OfflineSync";
 import Reminders from "./Reminders";
 
-const FULLSCREEN_PATHS = ["/login", "/recibo"];
+const FULLSCREEN_PATHS = [
+  "/login",
+  "/recibo",
+  "/carga/promissoria",
+  "/carga/fechamento",
+];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const path = usePathname();

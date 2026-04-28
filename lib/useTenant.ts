@@ -9,6 +9,8 @@ export type TenantContext = {
   tenant: Tenant | null;
   membership: Membership | null;
   isAdmin: boolean;
+  isOperator: boolean;
+  userId: string | null;
   refresh: () => Promise<void>;
 };
 
@@ -17,6 +19,7 @@ export function useTenant(): TenantContext {
   const [loading, setLoading] = useState(true);
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [membership, setMembership] = useState<Membership | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -26,9 +29,11 @@ export function useTenant(): TenantContext {
     if (!user) {
       setTenant(null);
       setMembership(null);
+      setUserId(null);
       setLoading(false);
       return;
     }
+    setUserId(user.id);
     const { data: m } = await supabase
       .from("memberships")
       .select("*")
@@ -57,6 +62,8 @@ export function useTenant(): TenantContext {
     tenant,
     membership,
     isAdmin: membership?.role === "admin",
+    isOperator: membership?.role === "operador",
+    userId,
     refresh: load,
   };
 }

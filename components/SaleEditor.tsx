@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { brl } from "@/lib/format";
 import type { Customer, Sale } from "@/lib/types";
@@ -29,18 +29,36 @@ export default function SaleEditor({
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [cargaStatus, setCargaStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!sale.carga_id) return;
+    supabase
+      .from("cargas")
+      .select("status")
+      .eq("id", sale.carga_id)
+      .maybeSingle()
+      .then(({ data }) => setCargaStatus((data?.status as string) ?? null));
+  }, [sale.carga_id, supabase]);
 
   const subtotal = quantity * unitPrice;
   const total = Math.max(0, +(subtotal - discount).toFixed(2));
   const isCanceled = !!sale.canceled_at;
+  const isCargaConferida = cargaStatus === "conferida";
   const minTotal = Number(sale.paid_amount);
   const editWindowH = tenant?.edit_window_hours ?? 24;
   const ageHours =
     (Date.now() - new Date(sale.created_at).getTime()) / 3_600_000;
   const outsideWindow = ageHours > editWindowH;
-  const lockedForOperator = !isAdmin && outsideWindow;
+  const lockedForOperator =
+    isCargaConferida || (!isAdmin && outsideWindow);
 
   async function save() {
+    if (isCargaConferida) {
+      return toast.error(
+        "Venda pertence a uma carga já conferida. Reabra a carga para editar."
+      );
+    }
     if (lockedForOperator) {
       return toast.error(
         `Janela de edição (${editWindowH}h) expirou. Peça a um admin.`

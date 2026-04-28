@@ -67,6 +67,7 @@ export type Sale = {
   cancel_reason: string | null;
   created_at: string;
   created_by?: string | null;
+  carga_id?: string | null;
 };
 
 export type SalePayment = {
@@ -104,7 +105,8 @@ export type CashSession = {
 export type CashMovement = {
   id: string;
   tenant_id: string;
-  session_id: string;
+  session_id: string | null;
+  carga_id?: string | null;
   kind: "suprimento" | "sangria";
   amount: number;
   notes: string | null;
@@ -120,16 +122,105 @@ export type Expense = {
   paid_at: string;
   payment_method_id: string | null;
   notes: string | null;
+  carga_id?: string | null;
 };
+
+export type InventoryMovementKind =
+  | "entrada"
+  | "perda"
+  | "ajuste"
+  | "carga_saida"
+  | "carga_retorno"
+  | "carga_perda";
 
 export type InventoryMovement = {
   id: string;
   tenant_id: string;
-  kind: "entrada" | "perda" | "ajuste";
+  kind: InventoryMovementKind;
   quantity: number;
   unit_cost: number | null;
   notes: string | null;
   created_at: string;
+  carga_id?: string | null;
+};
+
+export type Vehicle = {
+  id: string;
+  tenant_id: string;
+  plate: string;
+  model: string | null;
+  description: string | null;
+  active: boolean;
+  created_at: string;
+};
+
+export type Route = {
+  id: string;
+  tenant_id: string;
+  name: string;
+  description: string | null;
+  active: boolean;
+  created_at: string;
+};
+
+export type CargaStatus = "aberta" | "fechada" | "conferida";
+
+export type Carga = {
+  id: string;
+  tenant_id: string;
+  operator_id: string;
+  vehicle_id: string | null;
+  route_id: string | null;
+  status: CargaStatus;
+  opened_at: string;
+  opened_by: string | null;
+  opening_cocos: number;
+  closing_cocos_remaining: number | null;
+  closing_cash_declared: number | null;
+  closing_notes: string | null;
+  closed_at: string | null;
+  closed_by: string | null;
+  conferred_at: string | null;
+  conferred_by: string | null;
+  notes: string | null;
+};
+
+export type FiadoPromissoria = {
+  id: string;
+  tenant_id: string;
+  sale_id: string;
+  carga_id: string | null;
+  signer_name: string;
+  signer_document: string | null;
+  signer_address: string | null;
+  signature_data_url: string;
+  signed_at: string;
+  amount: number;
+  created_by: string | null;
+};
+
+export type CargaSummary = {
+  carga_id: string;
+  tenant_id: string;
+  operator_id: string;
+  status: CargaStatus;
+  opening_cocos: number;
+  closing_cocos_remaining: number | null;
+  closing_cash_declared: number | null;
+  cocos_vendidos: number;
+  cocos_perda: number;
+  total_vendido: number;
+  total_recebido: number;
+  total_fiado: number;
+  total_dinheiro: number;
+  total_pix: number;
+  total_cartao: number;
+  total_outros: number;
+  total_suprimento: number;
+  total_sangria: number;
+  total_despesas: number;
+  expected_cash: number;
+  cash_diff: number;
 };
 
 export type AuditLog = {
