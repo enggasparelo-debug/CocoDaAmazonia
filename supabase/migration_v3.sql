@@ -284,8 +284,11 @@ begin
     v_after  := to_jsonb(new);
   end if;
 
-  insert into public.audit_log (tenant_id, user_id, table_name, op, row_id, before_data, after_data)
-    values (v_tenant, auth.uid(), tg_table_name, tg_op, v_row_id, v_before, v_after);
+  -- Só registra se o tenant ainda existe (evita FK violation em cascade delete)
+  if v_tenant is not null and exists (select 1 from public.tenants where id = v_tenant) then
+    insert into public.audit_log (tenant_id, user_id, table_name, op, row_id, before_data, after_data)
+      values (v_tenant, auth.uid(), tg_table_name, tg_op, v_row_id, v_before, v_after);
+  end if;
 
   if (tg_op = 'DELETE') then return old; else return new; end if;
 end;

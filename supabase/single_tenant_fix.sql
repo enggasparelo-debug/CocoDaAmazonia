@@ -1,59 +1,46 @@
 -- =============================================================
--- Single-tenant fix:
---   1. Move o usuário NOVO para a loja do usuário ORIGINAL (admin)
---   2. Apaga a loja órfã que foi criada para o segundo signup
---   3. Atualiza o trigger handle_new_user: novos signups entram na
---      loja existente como 'operador' (em vez de criar nova loja)
+-- Single-tenant fix (versão 2 — corrige FK violation no audit_log):
+--   1. Atualiza log_audit() para ignorar tenant deletado
+--   2. Atualiza handle_new_user() — novos signups entram na loja existente
+--   3. Move outros usuários para o tenant mais antigo (admin) e apaga
+--      lojas órfãs
 -- Idempotente: pode rodar mais de uma vez.
 -- =============================================================
 
--- 1) Move o usuário mais recente p/ o tenant do mais antigo (como admin)
-do $$
+-- 1) Trigger de auditoria robusto (não quebra em cascade delete)
+create or replace function public.log_audit()
+returns trigger language plpgsql security definer as $$
 declare
-  v_target_tenant uuid;
-  v_user_id uuid;
-  v_orphan_tenant uuid;
+  v_tenant uuid;
+  v_row_id uuid;
+  v_before jsonb;
+  v_after  jsonb;
 begin
-  -- tenant do usuário mais antigo (loja "principal", com seus dados)
-  select m.tenant_id into v_target_tenant
-  from auth.users u
-  join public.memberships m on m.user_id = u.id
-  order by u.created_at asc
-  limit 1;
-
-  if v_target_tenant is null then
-    raise notice 'Nenhum tenant encontrado — nada a fazer.';
-    return;
+  if (tg_op = 'DELETE') then
+    v_tenant := old.tenant_id;
+    v_row_id := old.id;
+    v_before := to_jsonb(old);
+  elsif (tg_op = 'UPDATE') then
+    v_tenant := new.tenant_id;
+    v_row_id := new.id;
+    v_before := to_jsonb(old);
+    v_after  := to_jsonb(new);
+  else
+    v_tenant := new.tenant_id;
+    v_row_id := new.id;
+    v_after  := to_jsonb(new);
   end if;
 
-  -- para cada usuário diferente do mais antigo, move para o tenant principal
-  for v_user_id, v_orphan_tenant in
-    select u.id, m.tenant_id
-    from auth.users u
-    left join public.memberships m on m.user_id = u.id
-    where u.id <> (select id from auth.users order by created_at asc limit 1)
-  loop
-    -- adiciona como admin no tenant principal (se ainda não estiver)
-    insert into public.memberships (user_id, tenant_id, role)
-      values (v_user_id, v_target_tenant, 'admin')
-      on conflict (user_id, tenant_id) do update set role = 'admin';
+  if v_tenant is not null and exists (select 1 from public.tenants where id = v_tenant) then
+    insert into public.audit_log (tenant_id, user_id, table_name, op, row_id, before_data, after_data)
+      values (v_tenant, auth.uid(), tg_table_name, tg_op, v_row_id, v_before, v_after);
+  end if;
 
-    -- remove o vínculo antigo (se for outro tenant)
-    if v_orphan_tenant is not null and v_orphan_tenant <> v_target_tenant then
-      delete from public.memberships
-      where user_id = v_user_id and tenant_id = v_orphan_tenant;
+  if (tg_op = 'DELETE') then return old; else return new; end if;
+end;
+$$;
 
-      -- se ninguém mais usa esse tenant, apaga (cascade leva produto/formas)
-      if not exists (
-        select 1 from public.memberships where tenant_id = v_orphan_tenant
-      ) then
-        delete from public.tenants where id = v_orphan_tenant;
-      end if;
-    end if;
-  end loop;
-end $$;
-
--- 2) Atualiza o trigger handle_new_user p/ não criar mais lojas novas
+-- 2) Trigger de signup: entra na loja existente quando há apenas 1
 create or replace function public.handle_new_user()
 returns trigger language plpgsql security definer as $$
 declare
@@ -67,8 +54,7 @@ begin
     insert into public.memberships (user_id, tenant_id, role)
       values (new.id, v_tenant, 'operador');
   else
-    insert into public.tenants (name) values ('Minha Loja')
-      returning id into v_tenant;
+    insert into public.tenants (name) values ('Minha Loja') returning id into v_tenant;
     insert into public.memberships (user_id, tenant_id, role)
       values (new.id, v_tenant, 'admin');
     insert into public.product_settings (name, unit_price, tenant_id)
@@ -86,7 +72,48 @@ begin
 end;
 $$;
 
--- 3) Conferência: deve listar todos os usuários no MESMO tenant
+-- 3) Move usuários para o tenant mais antigo e apaga lojas órfãs
+do $$
+declare
+  v_target_tenant uuid;
+  v_user_id uuid;
+  v_orphan_tenant uuid;
+begin
+  select m.tenant_id into v_target_tenant
+  from auth.users u
+  join public.memberships m on m.user_id = u.id
+  order by u.created_at asc
+  limit 1;
+
+  if v_target_tenant is null then
+    raise notice 'Nenhum tenant encontrado — nada a fazer.';
+    return;
+  end if;
+
+  for v_user_id, v_orphan_tenant in
+    select u.id, m.tenant_id
+    from auth.users u
+    left join public.memberships m on m.user_id = u.id
+    where u.id <> (select id from auth.users order by created_at asc limit 1)
+  loop
+    insert into public.memberships (user_id, tenant_id, role)
+      values (v_user_id, v_target_tenant, 'admin')
+      on conflict (user_id, tenant_id) do update set role = 'admin';
+
+    if v_orphan_tenant is not null and v_orphan_tenant <> v_target_tenant then
+      delete from public.memberships
+      where user_id = v_user_id and tenant_id = v_orphan_tenant;
+
+      if not exists (
+        select 1 from public.memberships where tenant_id = v_orphan_tenant
+      ) then
+        delete from public.tenants where id = v_orphan_tenant;
+      end if;
+    end if;
+  end loop;
+end $$;
+
+-- 4) Conferência
 select u.email, m.role, t.name as tenant
 from auth.users u
 join public.memberships m on m.user_id = u.id
