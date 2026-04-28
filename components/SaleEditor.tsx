@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { brl } from "@/lib/format";
-import type { Customer, Sale } from "@/lib/types";
+import type { Customer, Sale, Seller } from "@/lib/types";
 import { useToast } from "./Toast";
 import { useTenant } from "@/lib/useTenant";
 
@@ -25,11 +25,13 @@ export default function SaleEditor({
   const [unitPrice, setUnitPrice] = useState(Number(sale.unit_price));
   const [discount, setDiscount] = useState(Number(sale.discount));
   const [customerId, setCustomerId] = useState(sale.customer_id ?? "");
+  const [sellerId, setSellerId] = useState<string>(sale.seller_id ?? "");
   const [notes, setNotes] = useState(sale.notes ?? "");
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [cargaStatus, setCargaStatus] = useState<string | null>(null);
+  const [sellers, setSellers] = useState<Seller[]>([]);
 
   useEffect(() => {
     if (!sale.carga_id) return;
@@ -40,6 +42,14 @@ export default function SaleEditor({
       .maybeSingle()
       .then(({ data }) => setCargaStatus((data?.status as string) ?? null));
   }, [sale.carga_id, supabase]);
+
+  useEffect(() => {
+    supabase
+      .from("sellers")
+      .select("*")
+      .order("name")
+      .then(({ data }) => setSellers((data as Seller[]) ?? []));
+  }, [supabase]);
 
   const subtotal = quantity * unitPrice;
   const total = Math.max(0, +(subtotal - discount).toFixed(2));
@@ -73,16 +83,19 @@ export default function SaleEditor({
     }
     setSaving(true);
     try {
+      const updates: Record<string, unknown> = {
+        quantity,
+        unit_price: unitPrice,
+        discount,
+        total,
+        customer_id: customerId || null,
+        notes: notes || null,
+      };
+      // Apenas admin pode trocar o vendedor
+      if (isAdmin) updates.seller_id = sellerId || null;
       const { error } = await supabase
         .from("sales")
-        .update({
-          quantity,
-          unit_price: unitPrice,
-          discount,
-          total,
-          customer_id: customerId || null,
-          notes: notes || null,
-        })
+        .update(updates)
         .eq("id", sale.id);
       if (error) throw error;
       // recalcular status (paid_amount não mudou, só total)
@@ -219,6 +232,25 @@ export default function SaleEditor({
               {customers.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label">
+              Vendedor {isAdmin ? "" : "(somente admin edita)"}
+            </label>
+            <select
+              value={sellerId}
+              onChange={(e) => setSellerId(e.target.value)}
+              className="input"
+              disabled={isCanceled || !isAdmin}
+            >
+              <option value="">— Sem vendedor —</option>
+              {sellers.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                  {s.active ? "" : " (inativo)"}
                 </option>
               ))}
             </select>

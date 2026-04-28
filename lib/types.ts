@@ -68,6 +68,7 @@ export type Sale = {
   created_at: string;
   created_by?: string | null;
   carga_id?: string | null;
+  seller_id?: string | null;
 };
 
 export type SalePayment = {
@@ -197,6 +198,15 @@ export type FiadoPromissoria = {
   signed_at: string;
   amount: number;
   created_by: string | null;
+};
+
+export type Seller = {
+  id: string;
+  tenant_id: string;
+  user_id: string | null;
+  name: string;
+  active: boolean;
+  created_at: string;
 };
 
 export type CargaSummary = {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { brl } from "@/lib/format";
@@ -8,6 +9,7 @@ import type { Customer, PaymentMethod, ProductSettings } from "@/lib/types";
 import PaymentModal from "@/components/PaymentModal";
 import CustomerQuickForm from "@/components/CustomerQuickForm";
 import { useToast } from "@/components/Toast";
+import { useTenant } from "@/lib/useTenant";
 
 function parseBrNumber(s: string): number {
   if (!s) return 0;
@@ -30,6 +32,7 @@ export default function CargaSaleForm({
   const supabase = createClient();
   const toast = useToast();
   const router = useRouter();
+  const { seller, isAdmin, loading: tLoading } = useTenant();
   const [settings, setSettings] = useState<ProductSettings | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
@@ -93,6 +96,7 @@ export default function CargaSaleForm({
   async function finalize() {
     if (qty <= 0) return toast.error("Informe a quantidade.");
     if (unitPrice <= 0) return toast.error("Informe o valor unitário.");
+    if (!seller) return toast.error("Vendedor não vinculado ao seu login.");
     setSaving(true);
     try {
       const { data, error } = await supabase
@@ -105,6 +109,7 @@ export default function CargaSaleForm({
           total,
           notes: notes || null,
           carga_id: cargaId,
+          seller_id: seller.id,
         })
         .select("*")
         .single();
@@ -121,9 +126,35 @@ export default function CargaSaleForm({
     }
   }
 
+  if (!tLoading && !seller) {
+    return (
+      <div className="card border-amber-300 bg-amber-50 text-amber-900 space-y-2">
+        <div className="font-bold">Sem vendedor vinculado</div>
+        <p className="text-sm">
+          Você ainda não está cadastrado como vendedor. Peça a um admin pra
+          criar seu vendedor em <strong>Configurações → Vendedores</strong> e
+          vincular ao seu login.
+        </p>
+        {isAdmin && (
+          <Link
+            href="/configuracoes/vendedores"
+            className="btn-secondary inline-block mt-2"
+          >
+            Ir pra Vendedores
+          </Link>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="card space-y-4">
+        {seller && (
+          <div className="text-xs text-coco-700">
+            Vendedor: <strong>{seller.name}</strong>
+          </div>
+        )}
         <div>
           <label className="label">Quantidade</label>
           <input
