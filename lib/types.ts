@@ -209,6 +209,15 @@ export type Seller = {
   created_at: string;
 };
 
+export type ExpenseCategory = {
+  id: string;
+  tenant_id: string;
+  name: string;
+  active: boolean;
+  sort_order: number;
+  created_at: string;
+};
+
 export type CargaSummary = {
   carga_id: string;
   tenant_id: string;

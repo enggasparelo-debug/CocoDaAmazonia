@@ -240,6 +240,9 @@ export default function ConfiguracoesPage() {
           <Link href="/configuracoes/vendedores" className="btn-secondary">
             🧑‍💼 Vendedores
           </Link>
+          <Link href="/configuracoes/categorias" className="btn-secondary">
+            🏷️ Categorias de despesa
+          </Link>
         </div>
       </div>
 

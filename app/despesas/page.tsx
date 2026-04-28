@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { brl, fmtDate } from "@/lib/format";
-import type { Expense, PaymentMethod } from "@/lib/types";
+import type { Expense, ExpenseCategory, PaymentMethod } from "@/lib/types";
 import { useToast } from "@/components/Toast";
 
 const empty: Partial<Expense> = {
@@ -13,16 +14,6 @@ const empty: Partial<Expense> = {
   notes: "",
   payment_method_id: null,
 };
-
-const CATEGORIES = [
-  "Fornecedor",
-  "Combustível",
-  "Gelo",
-  "Embalagem",
-  "Salário",
-  "Aluguel",
-  "Outros",
-];
 
 function nowLocalIso(): string {
   const d = new Date();
@@ -42,6 +33,7 @@ export default function DespesasPage() {
   const toast = useToast();
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
+  const [categories, setCategories] = useState<ExpenseCategory[]>([]);
   const [editing, setEditing] = useState<Partial<Expense> | null>(null);
   const [paidAtLocal, setPaidAtLocal] = useState<string>(nowLocalIso());
 
@@ -63,7 +55,7 @@ export default function DespesasPage() {
   const [to, setTo] = useState(() => new Date().toISOString().slice(0, 10));
 
   async function load() {
-    const [e, m] = await Promise.all([
+    const [e, m, c] = await Promise.all([
       supabase
         .from("expenses")
         .select("*")
@@ -76,9 +68,15 @@ export default function DespesasPage() {
         .eq("active", true)
         .eq("is_credit", false)
         .order("name"),
+      supabase
+        .from("expense_categories")
+        .select("*")
+        .order("sort_order")
+        .order("name"),
     ]);
     setExpenses((e.data as Expense[]) ?? []);
     setMethods((m.data as PaymentMethod[]) ?? []);
+    setCategories((c.data as ExpenseCategory[]) ?? []);
   }
 
   useEffect(() => {
@@ -278,12 +276,33 @@ export default function DespesasPage() {
                     }
                   >
                     <option value="">—</option>
-                    {CATEGORIES.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
+                    {categories
+                      .filter((c) => c.active)
+                      .map((c) => (
+                        <option key={c.id} value={c.name}>
+                          {c.name}
+                        </option>
+                      ))}
+                    {editing.category &&
+                      !categories.some(
+                        (c) => c.active && c.name === editing.category
+                      ) && (
+                        <option value={editing.category}>
+                          {editing.category} (inativa)
+                        </option>
+                      )}
                   </select>
+                  {categories.length === 0 && (
+                    <p className="text-xs text-amber-700 mt-1">
+                      Nenhuma categoria cadastrada.{" "}
+                      <Link
+                        href="/configuracoes/categorias"
+                        className="underline"
+                      >
+                        Cadastrar
+                      </Link>
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
