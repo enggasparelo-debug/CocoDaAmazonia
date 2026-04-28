@@ -1,0 +1,19 @@
+{
+  "name": "Coco da Amazônia",
+  "short_name": "Coco",
+  "description": "Controle de venda de coco verde",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f8faf8",
+  "theme_color": "#1f4d33",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

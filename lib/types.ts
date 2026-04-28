@@ -1,0 +1,236 @@
+export type Tenant = {
+  id: string;
+  name: string;
+  cnpj: string | null;
+  phone: string | null;
+  address: string | null;
+  logo_url: string | null;
+  receipt_msg: string | null;
+  edit_window_hours: number;
+  created_at: string;
+};
+
+export type Membership = {
+  user_id: string;
+  tenant_id: string;
+  role: "admin" | "operador";
+  created_at: string;
+};
+
+export type ProductSettings = {
+  id: string;
+  tenant_id: string;
+  name: string;
+  unit_price: number;
+  min_stock: number | null;
+  updated_at: string;
+};
+
+export type Customer = {
+  id: string;
+  tenant_id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  document: string | null;
+  address: string | null;
+  notes: string | null;
+  credit_limit: number | null;
+  active: boolean;
+  created_at: string;
+  created_by?: string | null;
+};
+
+export type PaymentMethod = {
+  id: string;
+  tenant_id: string;
+  name: string;
+  is_credit: boolean;
+  active: boolean;
+  created_at: string;
+};
+
+export type SaleStatus = "aberta" | "parcial" | "paga" | "cancelada";
+
+export type Sale = {
+  id: string;
+  tenant_id: string;
+  customer_id: string | null;
+  quantity: number;
+  unit_price: number;
+  discount: number;
+  total: number;
+  paid_amount: number;
+  status: SaleStatus;
+  notes: string | null;
+  canceled_at: string | null;
+  cancel_reason: string | null;
+  created_at: string;
+  created_by?: string | null;
+  carga_id?: string | null;
+};
+
+export type SalePayment = {
+  id: string;
+  tenant_id: string;
+  sale_id: string;
+  payment_method_id: string;
+  amount: number;
+  paid_at: string;
+  notes: string | null;
+};
+
+export type CustomerBalance = {
+  customer_id: string;
+  customer_name: string;
+  tenant_id: string;
+  credit_limit: number | null;
+  open_balance: number;
+  open_sales: number;
+  oldest_open_at: string | null;
+};
+
+export type CashSession = {
+  id: string;
+  tenant_id: string;
+  opened_at: string;
+  opened_by: string | null;
+  opening_amt: number;
+  closed_at: string | null;
+  closed_by: string | null;
+  closing_amt: number | null;
+  notes: string | null;
+};
+
+export type CashMovement = {
+  id: string;
+  tenant_id: string;
+  session_id: string | null;
+  carga_id?: string | null;
+  kind: "suprimento" | "sangria";
+  amount: number;
+  notes: string | null;
+  created_at: string;
+};
+
+export type Expense = {
+  id: string;
+  tenant_id: string;
+  description: string;
+  category: string | null;
+  amount: number;
+  paid_at: string;
+  payment_method_id: string | null;
+  notes: string | null;
+  carga_id?: string | null;
+};
+
+export type InventoryMovementKind =
+  | "entrada"
+  | "perda"
+  | "ajuste"
+  | "carga_saida"
+  | "carga_retorno"
+  | "carga_perda";
+
+export type InventoryMovement = {
+  id: string;
+  tenant_id: string;
+  kind: InventoryMovementKind;
+  quantity: number;
+  unit_cost: number | null;
+  notes: string | null;
+  created_at: string;
+  carga_id?: string | null;
+};
+
+export type Vehicle = {
+  id: string;
+  tenant_id: string;
+  plate: string;
+  model: string | null;
+  description: string | null;
+  active: boolean;
+  created_at: string;
+};
+
+export type Route = {
+  id: string;
+  tenant_id: string;
+  name: string;
+  description: string | null;
+  active: boolean;
+  created_at: string;
+};
+
+export type CargaStatus = "aberta" | "fechada" | "conferida";
+
+export type Carga = {
+  id: string;
+  tenant_id: string;
+  operator_id: string;
+  vehicle_id: string | null;
+  route_id: string | null;
+  status: CargaStatus;
+  opened_at: string;
+  opened_by: string | null;
+  opening_cocos: number;
+  closing_cocos_remaining: number | null;
+  closing_cash_declared: number | null;
+  closing_notes: string | null;
+  closed_at: string | null;
+  closed_by: string | null;
+  conferred_at: string | null;
+  conferred_by: string | null;
+  notes: string | null;
+};
+
+export type FiadoPromissoria = {
+  id: string;
+  tenant_id: string;
+  sale_id: string;
+  carga_id: string | null;
+  signer_name: string;
+  signer_document: string | null;
+  signer_address: string | null;
+  signature_data_url: string;
+  signed_at: string;
+  amount: number;
+  created_by: string | null;
+};
+
+export type CargaSummary = {
+  carga_id: string;
+  tenant_id: string;
+  operator_id: string;
+  status: CargaStatus;
+  opening_cocos: number;
+  closing_cocos_remaining: number | null;
+  closing_cash_declared: number | null;
+  cocos_vendidos: number;
+  cocos_perda: number;
+  total_vendido: number;
+  total_recebido: number;
+  total_fiado: number;
+  total_dinheiro: number;
+  total_pix: number;
+  total_cartao: number;
+  total_outros: number;
+  total_suprimento: number;
+  total_sangria: number;
+  total_despesas: number;
+  expected_cash: number;
+  cash_diff: number;
+};
+
+export type AuditLog = {
+  id: number;
+  tenant_id: string | null;
+  user_id: string | null;
+  table_name: string;
+  op: "INSERT" | "UPDATE" | "DELETE";
+  row_id: string | null;
+  before_data: Record<string, unknown> | null;
+  after_data: Record<string, unknown> | null;
+  at: string;
+};

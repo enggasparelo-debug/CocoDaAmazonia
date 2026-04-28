@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  height: 100%;
+  background: #f8faf8;
+  color: #1a402b;
+}
+
+@layer components {
+  .card {
+    @apply bg-white rounded-2xl shadow-sm border border-coco-100 p-5;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 font-semibold transition active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn bg-coco-600 text-white hover:bg-coco-700;
+  }
+  .btn-secondary {
+    @apply btn bg-coco-100 text-coco-800 hover:bg-coco-200;
+  }
+  .btn-danger {
+    @apply btn bg-red-600 text-white hover:bg-red-700;
+  }
+  .btn-ghost {
+    @apply btn bg-transparent text-coco-700 hover:bg-coco-100;
+  }
+  .input {
+    @apply w-full rounded-xl border border-coco-200 bg-white px-3 py-2 outline-none focus:border-coco-500 focus:ring-2 focus:ring-coco-200;
+  }
+  .label {
+    @apply block text-sm font-medium text-coco-800 mb-1;
+  }
+  .table {
+    @apply w-full text-sm;
+  }
+  .table thead th {
+    @apply text-left text-xs uppercase tracking-wider text-coco-700 bg-coco-50 px-3 py-2;
+  }
+  .table tbody td {
+    @apply px-3 py-2 border-t border-coco-100 align-middle;
+  }
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold;
+  }
+}

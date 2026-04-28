@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#1f4d33"/>
+  <g transform="translate(256 270)">
+    <ellipse cx="0" cy="0" rx="160" ry="170" fill="#3d985f"/>
+    <ellipse cx="-50" cy="-30" rx="35" ry="20" fill="#2c7a4a"/>
+    <ellipse cx="50" cy="0" rx="40" ry="25" fill="#2c7a4a"/>
+    <ellipse cx="-10" cy="60" rx="45" ry="22" fill="#2c7a4a"/>
+    <path d="M-30 -160 Q -10 -200 30 -185" stroke="#1a402b" stroke-width="14" stroke-linecap="round" fill="none"/>
+    <path d="M0 -170 L 0 -130" stroke="#1a402b" stroke-width="14" stroke-linecap="round"/>
+  </g>
+  <text x="256" y="450" text-anchor="middle" font-family="system-ui,sans-serif" font-size="48" font-weight="bold" fill="#dcf2e2">COCO</text>
+</svg>
