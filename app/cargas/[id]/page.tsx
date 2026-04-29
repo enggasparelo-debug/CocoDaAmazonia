@@ -16,6 +16,7 @@ import type {
   AuditLog,
 } from "@/lib/types";
 import CargaSummaryCards from "@/components/CargaSummaryCards";
+import ConfirmModal from "@/components/ConfirmModal";
 import { useToast } from "@/components/Toast";
 
 export default function CargaDetailPage() {
@@ -36,6 +37,20 @@ export default function CargaDetailPage() {
   const [reopenNotes, setReopenNotes] = useState("");
   const [showReopen, setShowReopen] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [routes, setRoutes] = useState<Route[]>([]);
+  const [editing, setEditing] = useState(false);
+  const [editForm, setEditForm] = useState({
+    vehicle_id: "",
+    route_id: "",
+    notes: "",
+    closing_notes: "",
+    opening_cocos: 0,
+    closing_cocos_remaining: 0,
+    closing_cash_declared: 0,
+  });
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   async function load() {
     const { data: c } = await supabase
@@ -95,6 +110,76 @@ export default function CargaDetailPage() {
     setVehicle((v.data as Vehicle | null) ?? null);
     setRoute((r.data as Route | null) ?? null);
     setAudit((a.data as AuditLog[]) ?? []);
+
+    const [vs, rs] = await Promise.all([
+      supabase.from("vehicles").select("*").order("plate"),
+      supabase.from("routes").select("*").order("name"),
+    ]);
+    setVehicles((vs.data as Vehicle[]) ?? []);
+    setRoutes((rs.data as Route[]) ?? []);
+  }
+
+  function openEdit() {
+    if (!carga) return;
+    setEditForm({
+      vehicle_id: carga.vehicle_id ?? "",
+      route_id: carga.route_id ?? "",
+      notes: carga.notes ?? "",
+      closing_notes: carga.closing_notes ?? "",
+      opening_cocos: carga.opening_cocos,
+      closing_cocos_remaining: carga.closing_cocos_remaining ?? 0,
+      closing_cash_declared: Number(carga.closing_cash_declared ?? 0),
+    });
+    setEditing(true);
+  }
+
+  async function saveEdit() {
+    if (!carga) return;
+    setSaving(true);
+    const hasSales = sales.length > 0;
+    const updates: Record<string, unknown> = {
+      vehicle_id: editForm.vehicle_id || null,
+      route_id: editForm.route_id || null,
+      notes: editForm.notes || null,
+      closing_notes: editForm.closing_notes || null,
+    };
+    // Só permite editar opening_cocos se NÃO houver vendas (caso contrário
+    // o estoque calculado fica inconsistente com o histórico).
+    if (!hasSales) {
+      updates.opening_cocos = editForm.opening_cocos;
+    }
+    if (carga.status !== "aberta") {
+      updates.closing_cocos_remaining = editForm.closing_cocos_remaining;
+      updates.closing_cash_declared = editForm.closing_cash_declared;
+    }
+    const { error } = await supabase
+      .from("cargas")
+      .update(updates)
+      .eq("id", carga.id);
+    setSaving(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Carga atualizada.");
+    setEditing(false);
+    load();
+  }
+
+  async function apagarCarga() {
+    if (!carga) return;
+    setSaving(true);
+    const { error } = await supabase.rpc("delete_carga", {
+      p_carga_id: carga.id,
+    });
+    setSaving(false);
+    setConfirmDelete(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Carga apagada.");
+    router.push("/cargas");
   }
 
   useEffect(() => {
@@ -209,6 +294,16 @@ export default function CargaDetailPage() {
               </button>
             </>
           )}
+          <button onClick={openEdit} className="btn-ghost">
+            ✏️ Editar
+          </button>
+          <button
+            onClick={() => setConfirmDelete(true)}
+            className="btn-ghost text-red-700"
+            title="Apagar carga"
+          >
+            🗑 Apagar
+          </button>
         </div>
       </div>
 
@@ -346,6 +441,192 @@ export default function CargaDetailPage() {
           )}
         </div>
       </details>
+
+      {editing && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 my-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-2xl font-bold text-coco-900">
+                Editar carga #{carga.code}
+              </h2>
+              <button onClick={() => setEditing(false)} className="btn-ghost">
+                Fechar
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Veículo</label>
+                  <select
+                    className="input"
+                    value={editForm.vehicle_id}
+                    onChange={(e) =>
+                      setEditForm({ ...editForm, vehicle_id: e.target.value })
+                    }
+                  >
+                    <option value="">— Sem veículo —</option>
+                    {vehicles.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.plate}
+                        {v.model ? ` · ${v.model}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Rota</label>
+                  <select
+                    className="input"
+                    value={editForm.route_id}
+                    onChange={(e) =>
+                      setEditForm({ ...editForm, route_id: e.target.value })
+                    }
+                  >
+                    <option value="">— Sem rota —</option>
+                    {routes.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="label">Cocos de abertura</label>
+                <input
+                  type="number"
+                  min={0}
+                  className="input"
+                  value={editForm.opening_cocos}
+                  onChange={(e) =>
+                    setEditForm({
+                      ...editForm,
+                      opening_cocos: parseInt(e.target.value || "0"),
+                    })
+                  }
+                  disabled={sales.length > 0}
+                />
+                {sales.length > 0 && (
+                  <p className="text-xs text-amber-700 mt-1">
+                    Carga já tem vendas — abertura travada para não
+                    desencaixar o estoque.
+                  </p>
+                )}
+              </div>
+
+              {carga.status !== "aberta" && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="label">Cocos restantes (sobra)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      className="input"
+                      value={editForm.closing_cocos_remaining}
+                      onChange={(e) =>
+                        setEditForm({
+                          ...editForm,
+                          closing_cocos_remaining: parseInt(
+                            e.target.value || "0"
+                          ),
+                        })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="label">Caixa declarado</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      className="input"
+                      value={editForm.closing_cash_declared}
+                      onChange={(e) =>
+                        setEditForm({
+                          ...editForm,
+                          closing_cash_declared: parseFloat(
+                            e.target.value || "0"
+                          ),
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="label">Notas (abertura)</label>
+                <input
+                  className="input"
+                  value={editForm.notes}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, notes: e.target.value })
+                  }
+                />
+              </div>
+
+              {carga.status !== "aberta" && (
+                <div>
+                  <label className="label">Notas de fechamento</label>
+                  <input
+                    className="input"
+                    value={editForm.closing_notes}
+                    onChange={(e) =>
+                      setEditForm({
+                        ...editForm,
+                        closing_notes: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button
+                onClick={() => setEditing(false)}
+                className="btn-ghost"
+                disabled={saving}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={saveEdit}
+                disabled={saving}
+                className="btn-primary"
+              >
+                {saving ? "…" : "Salvar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmDelete && (
+        <ConfirmModal
+          title="Apagar esta carga?"
+          danger
+          confirmText="Apagar"
+          message={
+            <>
+              {sales.length > 0 ? (
+                <>
+                  Esta carga tem <strong>{sales.length} venda(s)</strong>{" "}
+                  vinculada(s). Apague ou desvincule as vendas em{" "}
+                  <strong>Relatórios</strong> antes de apagar a carga.
+                </>
+              ) : (
+                <>
+                  Vai apagar a carga <strong>#{carga.code}</strong> e seus
+                  movimentos automáticos de estoque/caixa. Despesas vinculadas
+                  ficam preservadas (sem carga). Não dá pra desfazer.
+                </>
+              )}
+            </>
+          }
+          onCancel={() => setConfirmDelete(false)}
+          onConfirm={() => sales.length === 0 && apagarCarga()}
+        />
+      )}
 
       {showReopen && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
