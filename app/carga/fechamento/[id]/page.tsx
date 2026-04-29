@@ -137,7 +137,7 @@ export default function FechamentoPdfPage() {
           </div>
 
           <div className="text-xs text-coco-700">
-            <div>Carga #{carga.id.slice(0, 8)}</div>
+            <div>Carga #{carga.code}</div>
             <div>Aberta em {fmtDate(carga.opened_at)}</div>
             {carga.closed_at && (
               <div>Fechada em {fmtDate(carga.closed_at)}</div>

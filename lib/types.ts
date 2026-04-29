@@ -55,6 +55,7 @@ export type SaleStatus = "aberta" | "parcial" | "paga" | "cancelada";
 export type Sale = {
   id: string;
   tenant_id: string;
+  code: number;
   customer_id: string | null;
   quantity: number;
   unit_price: number;
@@ -169,6 +170,7 @@ export type CargaStatus = "aberta" | "fechada" | "conferida";
 export type Carga = {
   id: string;
   tenant_id: string;
+  code: number;
   operator_id: string;
   vehicle_id: string | null;
   route_id: string | null;

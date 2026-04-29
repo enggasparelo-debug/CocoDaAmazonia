@@ -152,7 +152,7 @@ export default function CargaDetailPage() {
             ← Voltar
           </Link>
           <h1 className="text-3xl font-bold text-coco-900">
-            Carga #{carga.id.slice(0, 8)}
+            Carga #{carga.code}
           </h1>
           <p className="text-coco-600">
             {fmtDate(carga.opened_at)} ·{" "}
