@@ -55,6 +55,7 @@ export type SaleStatus = "aberta" | "parcial" | "paga" | "cancelada";
 export type Sale = {
   id: string;
   tenant_id: string;
+  code: number;
   customer_id: string | null;
   quantity: number;
   unit_price: number;
@@ -68,6 +69,7 @@ export type Sale = {
   created_at: string;
   created_by?: string | null;
   carga_id?: string | null;
+  seller_id?: string | null;
 };
 
 export type SalePayment = {
@@ -168,6 +170,7 @@ export type CargaStatus = "aberta" | "fechada" | "conferida";
 export type Carga = {
   id: string;
   tenant_id: string;
+  code: number;
   operator_id: string;
   vehicle_id: string | null;
   route_id: string | null;
@@ -197,6 +200,24 @@ export type FiadoPromissoria = {
   signed_at: string;
   amount: number;
   created_by: string | null;
+};
+
+export type Seller = {
+  id: string;
+  tenant_id: string;
+  user_id: string | null;
+  name: string;
+  active: boolean;
+  created_at: string;
+};
+
+export type ExpenseCategory = {
+  id: string;
+  tenant_id: string;
+  name: string;
+  active: boolean;
+  sort_order: number;
+  created_at: string;
 };
 
 export type CargaSummary = {

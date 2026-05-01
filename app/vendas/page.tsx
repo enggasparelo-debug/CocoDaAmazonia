@@ -3,10 +3,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { brl } from "@/lib/format";
-import type { Customer, PaymentMethod, ProductSettings } from "@/lib/types";
+import type {
+  Customer,
+  PaymentMethod,
+  ProductSettings,
+  Seller,
+} from "@/lib/types";
 import PaymentModal from "@/components/PaymentModal";
 import { useToast } from "@/components/Toast";
 import { enqueueSale } from "@/lib/offlineQueue";
+import { useTenant } from "@/lib/useTenant";
 
 // Aceita "3", "3,5", "3.50" etc. Retorna 0 se inválido.
 function parseBrNumber(s: string): number {
@@ -29,14 +35,17 @@ function nowLocalIso(): string {
 export default function VendasPage() {
   const supabase = createClient();
   const toast = useToast();
+  const { seller: mySeller } = useTenant();
   const [settings, setSettings] = useState<ProductSettings | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
+  const [sellers, setSellers] = useState<Seller[]>([]);
 
   const [quantity, setQuantity] = useState<string>("");
   const [unitPriceStr, setUnitPriceStr] = useState<string>("");
   const [discountStr, setDiscountStr] = useState<string>("0");
   const [customerId, setCustomerId] = useState<string>("");
+  const [sellerId, setSellerId] = useState<string>("");
   const [notes, setNotes] = useState<string>("");
   const [saleDate, setSaleDate] = useState<string>(nowLocalIso());
   const [savingSale, setSavingSale] = useState(false);
@@ -67,7 +76,7 @@ export default function VendasPage() {
   );
 
   async function loadData() {
-    const [s, c, m] = await Promise.all([
+    const [s, c, m, sl] = await Promise.all([
       supabase.from("product_settings").select("*").limit(1).single(),
       supabase
         .from("customers")
@@ -79,6 +88,11 @@ export default function VendasPage() {
         .select("*")
         .eq("active", true)
         .order("name"),
+      supabase
+        .from("sellers")
+        .select("*")
+        .eq("active", true)
+        .order("name"),
     ]);
     if (s.data) {
       setSettings(s.data as ProductSettings);
@@ -87,11 +101,17 @@ export default function VendasPage() {
     }
     setCustomers((c.data as Customer[]) ?? []);
     setMethods((m.data as PaymentMethod[]) ?? []);
+    setSellers((sl.data as Seller[]) ?? []);
   }
 
   useEffect(() => {
     loadData();
   }, []);
+
+  // Pré-seleciona o seller do admin logado, se houver vínculo
+  useEffect(() => {
+    if (mySeller && !sellerId) setSellerId(mySeller.id);
+  }, [mySeller, sellerId]);
 
   useEffect(() => {
     if (!customerId) {
@@ -111,6 +131,7 @@ export default function VendasPage() {
   function buildPayload() {
     return {
       customer_id: customerId || null,
+      seller_id: sellerId,
       quantity: qty,
       unit_price: unitPrice,
       discount,
@@ -124,6 +145,7 @@ export default function VendasPage() {
     if (qty <= 0) return "Informe a quantidade.";
     if (unitPrice <= 0) return "Informe o valor unitário.";
     if (discount > subtotal) return "Desconto maior que o subtotal.";
+    if (!sellerId) return "Selecione um vendedor.";
     if (!saleDate) return "Informe a data da venda.";
     if (new Date(saleDate).getTime() > Date.now() + 60_000)
       return "A data da venda não pode ser no futuro.";
@@ -194,6 +216,7 @@ export default function VendasPage() {
     setOpenSaleTotal(0);
     setOpenSaleHasCustomer(false);
     setSaleDate(nowLocalIso());
+    setSellerId(mySeller?.id ?? "");
     if (settings) setUnitPriceStr(fmtBrNumber(Number(settings.unit_price)));
   }
 
@@ -277,6 +300,29 @@ export default function VendasPage() {
                 className="input text-2xl font-semibold"
               />
             </div>
+          </div>
+
+          <div>
+            <label className="label">
+              Vendedor <span className="text-red-700">*</span>
+            </label>
+            <select
+              value={sellerId}
+              onChange={(e) => setSellerId(e.target.value)}
+              className="input"
+            >
+              <option value="">— Selecione —</option>
+              {sellers.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+            {sellers.length === 0 && (
+              <p className="text-xs text-amber-700 mt-1">
+                Nenhum vendedor ativo. Cadastre em Configurações → Vendedores.
+              </p>
+            )}
           </div>
 
           <div className="grid sm:grid-cols-2 gap-4">

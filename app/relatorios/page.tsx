@@ -6,7 +6,23 @@ import { brl, fmtDate } from "@/lib/format";
 import type { Customer, PaymentMethod, Sale } from "@/lib/types";
 import StatusBadge from "@/components/StatusBadge";
 import SaleEditor from "@/components/SaleEditor";
+import ConfirmModal from "@/components/ConfirmModal";
 import Link from "next/link";
+import { useTenant } from "@/lib/useTenant";
+import { useToast } from "@/components/Toast";
+import {
+  PRESET_LABELS,
+  presetRange,
+  type DateRangePreset,
+} from "@/lib/dateRanges";
+
+const PRESETS: DateRangePreset[] = [
+  "hoje",
+  "ontem",
+  "amanha",
+  "semana-atual",
+  "semana-passada",
+];
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
@@ -25,6 +41,8 @@ function isoEnd(d: string) {
 
 export default function RelatoriosPage() {
   const supabase = createClient();
+  const toast = useToast();
+  const { isAdmin } = useTenant();
   const [from, setFrom] = useState(firstOfMonthStr());
   const [to, setTo] = useState(todayStr());
   const [customerId, setCustomerId] = useState<string>("");
@@ -38,6 +56,18 @@ export default function RelatoriosPage() {
   >([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Sale | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Sale | null>(null);
+
+  async function deleteSale(s: Sale) {
+    const { error } = await supabase.from("sales").delete().eq("id", s.id);
+    setConfirmDelete(null);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Venda apagada.");
+    loadReport();
+  }
 
   async function loadAux() {
     const [c, m] = await Promise.all([
@@ -165,7 +195,30 @@ export default function RelatoriosPage() {
         </button>
       </header>
 
-      <div className="card grid md:grid-cols-4 gap-3">
+      <div className="card space-y-3">
+        <div className="flex flex-wrap gap-2">
+          {PRESETS.map((p) => {
+            const r = presetRange(p);
+            const active = from === r.from && to === r.to;
+            return (
+              <button
+                key={p}
+                onClick={() => {
+                  setFrom(r.from);
+                  setTo(r.to);
+                }}
+                className={`px-3 py-1.5 rounded-full text-sm border transition ${
+                  active
+                    ? "bg-coco-600 text-white border-coco-600"
+                    : "bg-white text-coco-800 border-coco-200 hover:bg-coco-50"
+                }`}
+              >
+                {PRESET_LABELS[p]}
+              </button>
+            );
+          })}
+        </div>
+        <div className="grid md:grid-cols-4 gap-3">
         <div>
           <label className="label">De</label>
           <input
@@ -211,6 +264,7 @@ export default function RelatoriosPage() {
             <option value="parcial">Parcial</option>
             <option value="aberta">Aberta</option>
           </select>
+        </div>
         </div>
       </div>
 
@@ -268,6 +322,7 @@ export default function RelatoriosPage() {
           <table className="table">
             <thead>
               <tr>
+                <th>#</th>
                 <th>Data</th>
                 <th>Cliente</th>
                 <th>Qtd</th>
@@ -281,6 +336,7 @@ export default function RelatoriosPage() {
             <tbody>
               {sales.map((s) => (
                 <tr key={s.id} className={s.status === "cancelada" ? "opacity-60" : ""}>
+                  <td className="font-mono font-semibold">#{s.code}</td>
                   <td>{fmtDate(s.created_at)}</td>
                   <td>
                     {s.customer_id
@@ -299,15 +355,26 @@ export default function RelatoriosPage() {
                       href={`/recibo/${s.id}`}
                       target="_blank"
                       className="btn-ghost text-xs px-2"
+                      title="Recibo"
                     >
                       🧾
                     </Link>
                     <button
                       onClick={() => setEditing(s)}
                       className="btn-ghost text-xs px-2"
+                      title="Editar"
                     >
                       ✏️
                     </button>
+                    {isAdmin && (
+                      <button
+                        onClick={() => setConfirmDelete(s)}
+                        className="btn-ghost text-xs px-2 text-red-700"
+                        title="Apagar venda definitivamente"
+                      >
+                        🗑
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -325,6 +392,29 @@ export default function RelatoriosPage() {
             setEditing(null);
             loadReport();
           }}
+        />
+      )}
+
+      {confirmDelete && (
+        <ConfirmModal
+          title="Apagar esta venda definitivamente?"
+          danger
+          confirmText="Apagar tudo"
+          message={
+            <>
+              Vai apagar a venda <strong>#{confirmDelete.code}</strong> de{" "}
+              {brl(Number(confirmDelete.total))}{" "}
+              <strong>e todos os pagamentos relacionados</strong>. Não dá pra
+              desfazer.
+              <br />
+              <br />
+              Se for só corrigir, prefira <strong>Editar</strong> ou{" "}
+              <strong>Cancelar</strong> a venda — assim o histórico fica
+              preservado.
+            </>
+          }
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={() => deleteSale(confirmDelete)}
         />
       )}
     </div>

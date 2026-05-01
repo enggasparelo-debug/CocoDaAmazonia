@@ -15,7 +15,7 @@ type NavItem = {
 };
 
 const items: NavItem[] = [
-  { href: "/", label: "Painel", icon: "📊", roles: ["admin", "operador"] },
+  { href: "/", label: "Painel", icon: "📊", roles: ["admin"] },
   { href: "/carga", label: "Minha Carga", icon: "🚚", roles: ["operador", "admin"] },
   { href: "/vendas", label: "Venda Rápida", icon: "🥥", roles: ["admin"] },
   { href: "/cargas", label: "Cargas", icon: "📋", roles: ["admin"] },

@@ -166,8 +166,7 @@ export default function PromissoriaPage() {
             a quantia de{" "}
             <strong className="text-lg">{brl(remaining)}</strong>, referente à
             compra de <strong>{sale.quantity} cocos verdes</strong> a{" "}
-            {brl(Number(sale.unit_price))} cada (venda nº{" "}
-            {sale.id.slice(0, 8)}).
+            {brl(Number(sale.unit_price))} cada (venda nº {sale.code}).
             Comprometo-me a quitar este valor conforme combinado verbalmente.
           </p>
 

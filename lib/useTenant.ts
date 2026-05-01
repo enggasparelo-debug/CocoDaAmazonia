@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { Tenant, Membership } from "@/lib/types";
+import type { Tenant, Membership, Seller } from "@/lib/types";
 
 export type TenantContext = {
   loading: boolean;
@@ -11,6 +11,7 @@ export type TenantContext = {
   isAdmin: boolean;
   isOperator: boolean;
   userId: string | null;
+  seller: Seller | null;
   refresh: () => Promise<void>;
 };
 
@@ -20,6 +21,7 @@ export function useTenant(): TenantContext {
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [membership, setMembership] = useState<Membership | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [seller, setSeller] = useState<Seller | null>(null);
 
   async function load() {
     setLoading(true);
@@ -30,6 +32,7 @@ export function useTenant(): TenantContext {
       setTenant(null);
       setMembership(null);
       setUserId(null);
+      setSeller(null);
       setLoading(false);
       return;
     }
@@ -49,6 +52,14 @@ export function useTenant(): TenantContext {
         .maybeSingle();
       setTenant((t as Tenant) ?? null);
     }
+    // Vendedor vinculado ao login (pode não existir; não é erro)
+    const { data: sl } = await supabase
+      .from("sellers")
+      .select("*")
+      .eq("user_id", user.id)
+      .eq("active", true)
+      .maybeSingle();
+    setSeller((sl as Seller | null) ?? null);
     setLoading(false);
   }
 
@@ -64,6 +75,7 @@ export function useTenant(): TenantContext {
     isAdmin: membership?.role === "admin",
     isOperator: membership?.role === "operador",
     userId,
+    seller,
     refresh: load,
   };
 }

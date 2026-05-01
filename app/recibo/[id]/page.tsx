@@ -79,7 +79,7 @@ export default function ReciboPage() {
           </div>
 
           <div className="text-xs text-coco-700 mb-3">
-            {fmtDate(sale.created_at)} · #{sale.id.slice(0, 8)}
+            {fmtDate(sale.created_at)} · Venda #{sale.code}
           </div>
 
           {customer && (

@@ -115,6 +115,7 @@ export default function CargasListPage() {
           <table className="table">
             <thead>
               <tr>
+                <th>#</th>
                 <th>Aberta em</th>
                 <th>Operador</th>
                 <th>Veículo</th>
@@ -128,6 +129,7 @@ export default function CargasListPage() {
             <tbody>
               {rows.map((c) => (
                 <tr key={c.id}>
+                  <td className="font-mono font-semibold">#{c.code}</td>
                   <td>{fmtDate(c.opened_at)}</td>
                   <td className="font-mono text-xs">
                     {c.operator_id.slice(0, 8)}…

@@ -237,6 +237,12 @@ export default function ConfiguracoesPage() {
           <Link href="/configuracoes/rotas" className="btn-secondary">
             🗺️ Rotas
           </Link>
+          <Link href="/configuracoes/vendedores" className="btn-secondary">
+            🧑‍💼 Vendedores
+          </Link>
+          <Link href="/configuracoes/categorias" className="btn-secondary">
+            🏷️ Categorias de despesa
+          </Link>
         </div>
       </div>
 

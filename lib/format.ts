@@ -28,3 +28,17 @@ export const startOfMonthISO = () => {
   d.setHours(0, 0, 0, 0);
   return d.toISOString();
 };
+
+// Variação % entre valor atual e valor anterior. Retorna null quando
+// não dá pra calcular (anterior <= 0): evita "+Infinity" e "NaN%".
+export const pctChange = (curr: number, prev: number): number | null => {
+  if (!Number.isFinite(curr) || !Number.isFinite(prev)) return null;
+  if (prev <= 0) return curr > 0 ? null : 0;
+  return ((curr - prev) / prev) * 100;
+};
+
+export const fmtPct = (p: number | null, digits = 0): string => {
+  if (p === null) return "—";
+  const sign = p > 0 ? "+" : "";
+  return `${sign}${p.toFixed(digits)}%`;
+};
