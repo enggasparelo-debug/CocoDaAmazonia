@@ -2,10 +2,29 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { brl } from "@/lib/format";
-import type { Customer, Sale, Seller } from "@/lib/types";
+import { brl, fmtDate } from "@/lib/format";
+import type {
+  Customer,
+  PaymentMethod,
+  Sale,
+  SalePayment,
+  Seller,
+} from "@/lib/types";
 import { useToast } from "./Toast";
 import { useTenant } from "@/lib/useTenant";
+import PaymentEditor from "./PaymentEditor";
+
+function nowLocalIso(): string {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 16);
+}
+
+function isoToLocal(iso: string): string {
+  const d = new Date(iso);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 16);
+}
 
 export default function SaleEditor({
   sale,
@@ -27,11 +46,27 @@ export default function SaleEditor({
   const [customerId, setCustomerId] = useState(sale.customer_id ?? "");
   const [sellerId, setSellerId] = useState<string>(sale.seller_id ?? "");
   const [notes, setNotes] = useState(sale.notes ?? "");
+  const [createdAtLocal, setCreatedAtLocal] = useState<string>(
+    isoToLocal(sale.created_at)
+  );
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [cargaStatus, setCargaStatus] = useState<string | null>(null);
   const [sellers, setSellers] = useState<Seller[]>([]);
+  const [methods, setMethods] = useState<PaymentMethod[]>([]);
+  const [payments, setPayments] = useState<SalePayment[]>([]);
+  const [editingPayment, setEditingPayment] = useState<SalePayment | null>(
+    null
+  );
+  const [showNewPayment, setShowNewPayment] = useState(false);
+  const [newPay, setNewPay] = useState({
+    methodId: "",
+    amount: 0,
+    paidAtLocal: nowLocalIso(),
+    notes: "",
+  });
+  const [payErr, setPayErr] = useState<string | null>(null);
 
   useEffect(() => {
     if (!sale.carga_id) return;
@@ -49,7 +84,75 @@ export default function SaleEditor({
       .select("*")
       .order("name")
       .then(({ data }) => setSellers((data as Seller[]) ?? []));
+    supabase
+      .from("payment_methods")
+      .select("*")
+      .eq("active", true)
+      .eq("is_credit", false)
+      .order("name")
+      .then(({ data }) => {
+        const list = (data as PaymentMethod[]) ?? [];
+        setMethods(list);
+        setNewPay((p) => ({ ...p, methodId: list[0]?.id ?? "" }));
+      });
   }, [supabase]);
+
+  async function loadPayments() {
+    const { data } = await supabase
+      .from("sale_payments")
+      .select("*")
+      .eq("sale_id", sale.id)
+      .order("paid_at", { ascending: false });
+    setPayments((data as SalePayment[]) ?? []);
+  }
+  useEffect(() => {
+    loadPayments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sale.id]);
+
+  async function addPayment() {
+    setPayErr(null);
+    if (!newPay.methodId) return setPayErr("Escolha uma forma.");
+    if (newPay.amount <= 0) return setPayErr("Valor inválido.");
+    const paidAtIso = new Date(newPay.paidAtLocal).toISOString();
+    if (new Date(paidAtIso).getTime() > Date.now() + 60_000)
+      return setPayErr("Data não pode ser futura.");
+    const { error } = await supabase.from("sale_payments").insert({
+      sale_id: sale.id,
+      payment_method_id: newPay.methodId,
+      amount: newPay.amount,
+      paid_at: paidAtIso,
+      notes: newPay.notes || null,
+    });
+    if (error) return setPayErr(error.message);
+    toast.success("Pagamento lançado.");
+    setShowNewPayment(false);
+    setNewPay({
+      methodId: methods[0]?.id ?? "",
+      amount: 0,
+      paidAtLocal: nowLocalIso(),
+      notes: "",
+    });
+    await loadPayments();
+    onSaved(); // recarrega o saldo no caller (paid_amount)
+  }
+
+  async function deletePayment(p: SalePayment) {
+    if (
+      !confirm(
+        `Apagar pagamento de ${brl(Number(p.amount))} de ${fmtDate(p.paid_at)}?`
+      )
+    )
+      return;
+    const { error } = await supabase
+      .from("sale_payments")
+      .delete()
+      .eq("id", p.id);
+    if (error) return toast.error(error.message);
+    toast.success("Pagamento removido.");
+    await loadPayments();
+    onSaved();
+  }
 
   const subtotal = quantity * unitPrice;
   const total = Math.max(0, +(subtotal - discount).toFixed(2));
@@ -81,6 +184,11 @@ export default function SaleEditor({
         `Total (${brl(total)}) menor que o já recebido (${brl(minTotal)}).`
       );
     }
+    if (!createdAtLocal) return toast.error("Informe a data da venda.");
+    const createdAtIso = new Date(createdAtLocal).toISOString();
+    if (new Date(createdAtIso).getTime() > Date.now() + 60_000) {
+      return toast.error("A data da venda não pode ser no futuro.");
+    }
     setSaving(true);
     try {
       const updates: Record<string, unknown> = {
@@ -90,6 +198,7 @@ export default function SaleEditor({
         total,
         customer_id: customerId || null,
         notes: notes || null,
+        created_at: createdAtIso,
       };
       // Apenas admin pode trocar o vendedor
       if (isAdmin) updates.seller_id = sellerId || null;
@@ -181,6 +290,16 @@ export default function SaleEditor({
         )}
 
         <div className="space-y-3">
+          <div>
+            <label className="label">Data da venda</label>
+            <input
+              type="datetime-local"
+              className="input"
+              value={createdAtLocal}
+              onChange={(e) => setCreatedAtLocal(e.target.value)}
+              disabled={isCanceled}
+            />
+          </div>
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="label">Quantidade</label>
@@ -281,6 +400,79 @@ export default function SaleEditor({
           </div>
         </div>
 
+        {!isCanceled && (
+          <div className="mt-4 border border-coco-100 rounded-xl p-3">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="font-bold text-coco-900 text-sm">
+                Pagamentos ({payments.length})
+              </h3>
+              <button
+                onClick={() => {
+                  const rest = +(total - Number(sale.paid_amount)).toFixed(2);
+                  setNewPay({
+                    methodId: methods[0]?.id ?? "",
+                    amount: rest > 0 ? rest : 0,
+                    paidAtLocal: nowLocalIso(),
+                    notes: "",
+                  });
+                  setPayErr(null);
+                  setShowNewPayment(true);
+                }}
+                className="btn-secondary text-xs py-1"
+              >
+                + Lançar
+              </button>
+            </div>
+            {payments.length === 0 ? (
+              <p className="text-xs text-coco-600">
+                Nenhum pagamento lançado.
+              </p>
+            ) : (
+              <div className="space-y-1">
+                {payments.map((p) => {
+                  const m = methods.find((x) => x.id === p.payment_method_id);
+                  return (
+                    <div
+                      key={p.id}
+                      className="flex items-center justify-between text-sm border-b border-coco-50 py-1"
+                    >
+                      <div>
+                        <span className="text-coco-700">
+                          {fmtDate(p.paid_at)} · {m?.name ?? "?"}
+                        </span>
+                        {p.notes && (
+                          <span className="text-coco-500 text-xs ml-2">
+                            {p.notes}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <strong className="text-green-700">
+                          {brl(Number(p.amount))}
+                        </strong>
+                        <button
+                          onClick={() => setEditingPayment(p)}
+                          className="btn-ghost text-xs px-1.5"
+                          title="Editar"
+                        >
+                          ✏️
+                        </button>
+                        <button
+                          onClick={() => deletePayment(p)}
+                          className="btn-ghost text-xs px-1.5 text-red-700"
+                          title="Apagar"
+                        >
+                          🗑
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         {!isCanceled ? (
           <>
             <div className="mt-4">
@@ -319,6 +511,97 @@ export default function SaleEditor({
               Fechar
             </button>
           </div>
+        )}
+
+        {showNewPayment && (
+          <div className="fixed inset-0 z-[90] bg-black/50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl p-6 max-w-md w-full">
+              <h3 className="font-bold text-lg mb-3">Lançar pagamento</h3>
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="label">Forma</label>
+                    <select
+                      className="input"
+                      value={newPay.methodId}
+                      onChange={(e) =>
+                        setNewPay({ ...newPay, methodId: e.target.value })
+                      }
+                    >
+                      {methods.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="label">Data</label>
+                    <input
+                      type="datetime-local"
+                      className="input"
+                      value={newPay.paidAtLocal}
+                      onChange={(e) =>
+                        setNewPay({ ...newPay, paidAtLocal: e.target.value })
+                      }
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="label">Valor</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    className="input text-2xl font-bold"
+                    value={newPay.amount}
+                    onChange={(e) =>
+                      setNewPay({
+                        ...newPay,
+                        amount: parseFloat(e.target.value || "0"),
+                      })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="label">Observação</label>
+                  <input
+                    className="input"
+                    value={newPay.notes}
+                    onChange={(e) =>
+                      setNewPay({ ...newPay, notes: e.target.value })
+                    }
+                  />
+                </div>
+              </div>
+              {payErr && (
+                <p className="text-red-700 text-sm mt-3">{payErr}</p>
+              )}
+              <div className="flex justify-end gap-2 mt-4">
+                <button
+                  onClick={() => setShowNewPayment(false)}
+                  className="btn-ghost"
+                >
+                  Cancelar
+                </button>
+                <button onClick={addPayment} className="btn-primary">
+                  Lançar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {editingPayment && (
+          <PaymentEditor
+            payment={editingPayment}
+            methods={methods}
+            onClose={() => setEditingPayment(null)}
+            onSaved={() => {
+              setEditingPayment(null);
+              loadPayments();
+              onSaved();
+            }}
+          />
         )}
 
         {confirmCancel && (
