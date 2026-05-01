@@ -3,138 +3,283 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { brl, fmtDate, startOfMonthISO, todayISO } from "@/lib/format";
-import type { Sale } from "@/lib/types";
+import { brl, fmtDate, fmtPct, pctChange } from "@/lib/format";
+import {
+  DASHBOARD_PRESETS,
+  type DashboardPreset,
+  bucketByDay,
+  dashboardRange,
+  hoursSince,
+  last14Days,
+  previousRange,
+  rangeBoundsIso,
+  topBy,
+} from "@/lib/dashboard";
+import type {
+  Customer,
+  PaymentMethod,
+  Sale,
+  Seller,
+} from "@/lib/types";
 import StatusBadge from "@/components/StatusBadge";
-import Sparkline from "@/components/Sparkline";
 import { SkeletonRows } from "@/components/Skeleton";
+import BarChart, { type BarPoint } from "@/components/BarChart";
+import DashboardKpi from "@/components/DashboardKpi";
+import DashboardAlerts, {
+  type DashboardAlert,
+} from "@/components/DashboardAlerts";
+import TopList from "@/components/TopList";
+import SaleEditor from "@/components/SaleEditor";
 
-type Stats = {
-  todayCount: number;
-  todayTotal: number;
-  monthCount: number;
-  monthTotal: number;
-  monthExpenses: number;
+type SaleLite = Pick<
+  Sale,
+  | "id"
+  | "code"
+  | "total"
+  | "paid_amount"
+  | "quantity"
+  | "customer_id"
+  | "seller_id"
+  | "status"
+  | "created_at"
+>;
+
+type PaymentLite = {
+  id: string;
+  amount: number;
+  paid_at: string;
+  payment_method_id: string | null;
+};
+
+type State = {
+  // período corrente
+  curSales: SaleLite[];
+  curPayments: PaymentLite[];
+  curExpenses: number;
+  // período anterior equivalente
+  prevSalesTotal: number;
+  prevPaymentsTotal: number;
+  prevExpenses: number;
+  // séries fixas
+  bar14: BarPoint[];
+  recent: Sale[];
+  // estado fixo
   receivable: number;
-  customers: number;
+  oldestOpenIso: string | null;
   stock: number;
+  minStock: number;
   cashOpen: boolean;
+  cashOpenedAt: string | null;
+  openCargas: number;
+  oldestCargaOpenedAt: string | null;
+};
+
+const EMPTY: State = {
+  curSales: [],
+  curPayments: [],
+  curExpenses: 0,
+  prevSalesTotal: 0,
+  prevPaymentsTotal: 0,
+  prevExpenses: 0,
+  bar14: [],
+  recent: [],
+  receivable: 0,
+  oldestOpenIso: null,
+  stock: 0,
+  minStock: 0,
+  cashOpen: false,
+  cashOpenedAt: null,
+  openCargas: 0,
+  oldestCargaOpenedAt: null,
 };
 
 export default function DashboardClient() {
   const supabase = createClient();
-  const [stats, setStats] = useState<Stats>({
-    todayCount: 0,
-    todayTotal: 0,
-    monthCount: 0,
-    monthTotal: 0,
-    monthExpenses: 0,
-    receivable: 0,
-    customers: 0,
-    stock: 0,
-    cashOpen: false,
-  });
-  const [recent, setRecent] = useState<Sale[]>([]);
-  const [series, setSeries] = useState<{ date: string; total: number }[]>([]);
+  const [preset, setPreset] = useState<DashboardPreset>("hoje");
+  const [state, setState] = useState<State>(EMPTY);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [sellers, setSellers] = useState<Seller[]>([]);
+  const [methods, setMethods] = useState<PaymentMethod[]>([]);
+  const [editing, setEditing] = useState<Sale | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const range = useMemo(() => dashboardRange(preset), [preset]);
+  const prevR = useMemo(() => previousRange(range), [range]);
 
   async function load() {
     setLoading(true);
     setError(null);
     try {
-      const today = todayISO();
-      const month = startOfMonthISO();
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
-      sevenDaysAgo.setHours(0, 0, 0, 0);
+      const cur = rangeBoundsIso(range);
+      const prev = rangeBoundsIso(prevR);
+      const days = last14Days();
+      const bar14Start = days[0].toISOString();
 
       const [
-        todayQ,
-        monthQ,
-        monthExp,
-        openQ,
-        custQ,
+        curSalesQ,
+        curPaymentsQ,
+        curExpensesQ,
+        prevSalesQ,
+        prevPaymentsQ,
+        prevExpensesQ,
+        bar14Q,
         recentQ,
-        weekSales,
-        stock,
-        cash,
+        balancesQ,
+        stockQ,
+        prodQ,
+        cashQ,
+        cargasQ,
+        custsQ,
+        sellersQ,
+        methodsQ,
       ] = await Promise.all([
         supabase
           .from("sales")
-          .select("total", { count: "exact" })
-          .gte("created_at", today)
+          .select(
+            "id,code,total,paid_amount,quantity,customer_id,seller_id,status,created_at"
+          )
+          .gte("created_at", cur.startIso)
+          .lt("created_at", cur.endIso)
           .neq("status", "cancelada"),
         supabase
-          .from("sales")
-          .select("total", { count: "exact" })
-          .gte("created_at", month)
-          .neq("status", "cancelada"),
+          .from("sale_payments")
+          .select("id,amount,paid_at,payment_method_id")
+          .gte("paid_at", cur.startIso)
+          .lt("paid_at", cur.endIso),
         supabase
           .from("expenses")
           .select("amount")
-          .gte("paid_at", month),
-        supabase.from("customer_balances").select("open_balance"),
+          .gte("paid_at", cur.startIso)
+          .lt("paid_at", cur.endIso),
         supabase
-          .from("customers")
-          .select("id", { count: "exact", head: true })
-          .eq("active", true),
+          .from("sales")
+          .select("total")
+          .gte("created_at", prev.startIso)
+          .lt("created_at", prev.endIso)
+          .neq("status", "cancelada"),
+        supabase
+          .from("sale_payments")
+          .select("amount")
+          .gte("paid_at", prev.startIso)
+          .lt("paid_at", prev.endIso),
+        supabase
+          .from("expenses")
+          .select("amount")
+          .gte("paid_at", prev.startIso)
+          .lt("paid_at", prev.endIso),
+        supabase
+          .from("sales")
+          .select("created_at,total,status")
+          .gte("created_at", bar14Start),
         supabase
           .from("sales")
           .select("*")
           .order("created_at", { ascending: false })
           .limit(8),
         supabase
-          .from("sales")
-          .select("created_at,total,status")
-          .gte("created_at", sevenDaysAgo.toISOString()),
-        supabase.from("inventory_balance").select("*").maybeSingle(),
+          .from("customer_balances")
+          .select("open_balance,oldest_open_at"),
+        supabase.from("inventory_balance").select("on_hand").maybeSingle(),
         supabase
-          .from("cash_sessions")
-          .select("id")
-          .is("closed_at", null)
+          .from("product_settings")
+          .select("min_stock")
           .limit(1)
           .maybeSingle(),
+        supabase
+          .from("cash_sessions")
+          .select("id,opened_at")
+          .is("closed_at", null)
+          .order("opened_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        supabase
+          .from("cargas")
+          .select("id,opened_at")
+          .eq("status", "aberta"),
+        supabase.from("customers").select("*").order("name"),
+        supabase.from("sellers").select("*").order("name"),
+        supabase.from("payment_methods").select("*").order("name"),
       ]);
 
-      const todayTotal =
-        todayQ.data?.reduce((s, r: any) => s + Number(r.total), 0) ?? 0;
-      const monthTotal =
-        monthQ.data?.reduce((s, r: any) => s + Number(r.total), 0) ?? 0;
-      const monthExpenses =
-        monthExp.data?.reduce((s, r: any) => s + Number(r.amount), 0) ?? 0;
-      const receivable =
-        openQ.data?.reduce((s, r: any) => s + Number(r.open_balance), 0) ?? 0;
-
-      // série últimos 7 dias
-      const days: { date: string; total: number }[] = [];
-      for (let i = 6; i >= 0; i--) {
-        const d = new Date();
-        d.setDate(d.getDate() - i);
-        d.setHours(0, 0, 0, 0);
-        const key = d.toISOString().slice(0, 10);
-        days.push({ date: key, total: 0 });
-      }
-      (weekSales.data ?? []).forEach((s: any) => {
-        if (s.status === "cancelada") return;
-        const k = new Date(s.created_at).toISOString().slice(0, 10);
-        const day = days.find((d) => d.date === k);
-        if (day) day.total += Number(s.total);
+      const bar14Rows = (bar14Q.data ?? []).filter(
+        (r: any) => r.status !== "cancelada"
+      );
+      const buckets = bucketByDay(
+        bar14Rows as { created_at: string; total: number }[],
+        days,
+        (r) => new Date(r.created_at),
+        (r) => Number(r.total)
+      );
+      const todayKey = days[days.length - 1].toISOString().slice(0, 10);
+      const bar14: BarPoint[] = buckets.map((b) => {
+        const d = new Date(b.date);
+        return {
+          date: b.date,
+          value: b.value,
+          label: d.toLocaleDateString("pt-BR", {
+            day: "2-digit",
+            month: "2-digit",
+          }),
+          highlight: b.date === todayKey,
+        };
       });
-      setSeries(days);
 
-      setStats({
-        todayCount: todayQ.count ?? 0,
-        todayTotal,
-        monthCount: monthQ.count ?? 0,
-        monthTotal,
-        monthExpenses,
+      const balances = (balancesQ.data ?? []) as {
+        open_balance: number | null;
+        oldest_open_at: string | null;
+      }[];
+      const receivable = balances.reduce(
+        (s, r) => s + Number(r.open_balance ?? 0),
+        0
+      );
+      const oldestOpenIso =
+        balances
+          .map((b) => b.oldest_open_at)
+          .filter((x): x is string => !!x)
+          .sort()[0] ?? null;
+
+      const cargasData = (cargasQ.data ?? []) as { opened_at: string }[];
+      const oldestCargaOpenedAt =
+        cargasData
+          .map((c) => c.opened_at)
+          .filter((x): x is string => !!x)
+          .sort()[0] ?? null;
+
+      const sumAmount = (rows: any[] | null | undefined) =>
+        (rows ?? []).reduce((s, r) => s + Number(r.amount ?? 0), 0);
+      const sumTotal = (rows: any[] | null | undefined) =>
+        (rows ?? []).reduce((s, r) => s + Number(r.total ?? 0), 0);
+
+      setState({
+        curSales: ((curSalesQ.data ?? []) as SaleLite[]).map((s) => ({
+          ...s,
+          total: Number(s.total),
+          paid_amount: Number(s.paid_amount),
+          quantity: Number(s.quantity),
+        })),
+        curPayments: ((curPaymentsQ.data ?? []) as PaymentLite[]).map((p) => ({
+          ...p,
+          amount: Number(p.amount),
+        })),
+        curExpenses: sumAmount(curExpensesQ.data),
+        prevSalesTotal: sumTotal(prevSalesQ.data),
+        prevPaymentsTotal: sumAmount(prevPaymentsQ.data),
+        prevExpenses: sumAmount(prevExpensesQ.data),
+        bar14,
+        recent: (recentQ.data as Sale[]) ?? [],
         receivable,
-        customers: custQ.count ?? 0,
-        stock: (stock.data as any)?.on_hand ?? 0,
-        cashOpen: !!cash.data,
+        oldestOpenIso,
+        stock: Number((stockQ.data as any)?.on_hand ?? 0),
+        minStock: Number((prodQ.data as any)?.min_stock ?? 0),
+        cashOpen: !!cashQ.data,
+        cashOpenedAt: (cashQ.data as any)?.opened_at ?? null,
+        openCargas: cargasData.length,
+        oldestCargaOpenedAt,
       });
-      setRecent((recentQ.data as Sale[]) ?? []);
+      setCustomers((custsQ.data as Customer[]) ?? []);
+      setSellers((sellersQ.data as Seller[]) ?? []);
+      setMethods((methodsQ.data as PaymentMethod[]) ?? []);
     } catch (e: any) {
       setError(e.message ?? String(e));
     } finally {
@@ -144,37 +289,156 @@ export default function DashboardClient() {
 
   useEffect(() => {
     load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preset]);
 
-  const profit = stats.monthTotal - stats.monthExpenses;
-  const sparkLabels = useMemo(
+  const customerMap = useMemo(() => {
+    const m: Record<string, Customer> = {};
+    customers.forEach((c) => (m[c.id] = c));
+    return m;
+  }, [customers]);
+  const sellerMap = useMemo(() => {
+    const m: Record<string, Seller> = {};
+    sellers.forEach((s) => (m[s.id] = s));
+    return m;
+  }, [sellers]);
+  const methodMap = useMemo(() => {
+    const m: Record<string, PaymentMethod> = {};
+    methods.forEach((p) => (m[p.id] = p));
+    return m;
+  }, [methods]);
+
+  const faturado = state.curSales.reduce((s, r) => s + r.total, 0);
+  const recebido = state.curPayments.reduce((s, p) => s + p.amount, 0);
+  const lucroAtual = recebido - state.curExpenses;
+  const lucroPrev = state.prevPaymentsTotal - state.prevExpenses;
+  const totalCocos = state.curSales.reduce((s, r) => s + r.quantity, 0);
+  const recebidoPctFat =
+    faturado > 0 ? Math.round((recebido / faturado) * 100) : null;
+
+  const dFat = pctChange(faturado, state.prevSalesTotal);
+  const dRec = pctChange(recebido, state.prevPaymentsTotal);
+  const dLucro = pctChange(lucroAtual, lucroPrev);
+
+  const topSellers = useMemo(
     () =>
-      series.map((d) =>
-        new Date(d.date).toLocaleDateString("pt-BR", {
-          day: "2-digit",
-          month: "2-digit",
-        })
-      ),
-    [series]
+      topBy(
+        state.curSales,
+        (s) => s.seller_id,
+        (s) => s.total,
+        3
+      ).map((t) => ({
+        key: t.key,
+        label: sellerMap[t.key]?.name ?? "—",
+        value: t.value,
+      })),
+    [state.curSales, sellerMap]
   );
-  const sparkValues = useMemo(() => series.map((d) => d.total), [series]);
+  const topCustomers = useMemo(
+    () =>
+      topBy(
+        state.curSales,
+        (s) => s.customer_id,
+        (s) => s.total,
+        3
+      ).map((t) => ({
+        key: t.key,
+        label: customerMap[t.key]?.name ?? "—",
+        value: t.value,
+      })),
+    [state.curSales, customerMap]
+  );
+  const topMethods = useMemo(
+    () =>
+      topBy(
+        state.curPayments,
+        (p) => p.payment_method_id,
+        (p) => p.amount,
+        3
+      ).map((t) => ({
+        key: t.key,
+        label: methodMap[t.key]?.name ?? "Outros",
+        value: t.value,
+      })),
+    [state.curPayments, methodMap]
+  );
+
+  const alerts = useMemo<DashboardAlert[]>(() => {
+    const list: DashboardAlert[] = [];
+    if (state.minStock > 0 && state.stock <= state.minStock) {
+      list.push({
+        id: "stock",
+        icon: "🥥",
+        text:
+          state.stock <= 0
+            ? "Estoque zerado"
+            : `Estoque baixo: ${state.stock} ≤ mínimo ${state.minStock}`,
+        href: "/estoque",
+        tone: "red",
+      });
+    }
+    const oldestOpenH = hoursSince(state.oldestOpenIso);
+    if (oldestOpenH !== null && oldestOpenH > 24 * 30) {
+      list.push({
+        id: "fiado",
+        icon: "💰",
+        text: `Fiado em aberto há +${Math.floor(oldestOpenH / 24)} dias`,
+        href: "/receber",
+        tone: "amber",
+      });
+    }
+    const cashH = hoursSince(state.cashOpenedAt);
+    if (state.cashOpen && cashH !== null && cashH >= 24) {
+      list.push({
+        id: "cash",
+        icon: "💵",
+        text: `Caixa aberto há ${cashH}h`,
+        href: "/caixa",
+        tone: "amber",
+      });
+    }
+    const cargaH = hoursSince(state.oldestCargaOpenedAt);
+    if (state.openCargas > 0 && cargaH !== null && cargaH >= 24) {
+      list.push({
+        id: "carga",
+        icon: "🚚",
+        text:
+          state.openCargas === 1
+            ? `Carga aberta há ${cargaH}h`
+            : `${state.openCargas} cargas abertas (mais antiga há ${cargaH}h)`,
+        href: "/cargas",
+        tone: "amber",
+      });
+    }
+    return list;
+  }, [state]);
+
+  const presetLabel =
+    DASHBOARD_PRESETS.find((p) => p.id === preset)?.label ?? "";
 
   return (
     <div className="space-y-6">
-      <header className="flex items-center justify-between flex-wrap gap-3">
+      <header className="flex items-start justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-3xl font-bold text-coco-900">Painel</h1>
-          <p className="text-coco-600">Visão geral do dia e do mês</p>
+          <p className="text-coco-600">
+            Operações e financeiro · período: <strong>{presetLabel}</strong>
+          </p>
         </div>
-        <div className="flex gap-2">
-          {!stats.cashOpen && (
-            <Link href="/caixa" className="btn-secondary">
-              💵 Abrir caixa
-            </Link>
-          )}
-          <Link href="/vendas" className="btn-primary text-lg">
-            🥥 Nova Venda
-          </Link>
+        <div className="flex flex-wrap gap-1 bg-coco-50 p-1 rounded-xl">
+          {DASHBOARD_PRESETS.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => setPreset(p.id)}
+              className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                preset === p.id
+                  ? "bg-white text-coco-900 shadow-sm font-semibold"
+                  : "text-coco-700 hover:bg-white/60"
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
         </div>
       </header>
 
@@ -184,113 +448,224 @@ export default function DashboardClient() {
         </div>
       )}
 
+      <DashboardAlerts alerts={alerts} />
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <DashboardKpi
+          label="Faturado"
+          icon="🧾"
+          accent="primary"
+          size="hero"
+          value={brl(faturado)}
+          sub={
+            <>
+              {state.curSales.length} venda
+              {state.curSales.length === 1 ? "" : "s"} · {totalCocos} coco
+              {totalCocos === 1 ? "" : "s"}
+              {dFat !== null && (
+                <span className="ml-2 opacity-90">{fmtPct(dFat)}</span>
+              )}
+            </>
+          }
+        />
+        <DashboardKpi
+          label="Recebido"
+          icon="💵"
+          accent="green"
+          size="hero"
+          value={brl(recebido)}
+          sub={
+            <>
+              {recebidoPctFat !== null
+                ? `${recebidoPctFat}% do faturado`
+                : "—"}
+              {dRec !== null && <span className="ml-2">{fmtPct(dRec)}</span>}
+            </>
+          }
+        />
+        <DashboardKpi
+          label="Lucro estimado"
+          icon={lucroAtual >= 0 ? "📈" : "📉"}
+          accent={lucroAtual >= 0 ? "green" : "red"}
+          size="hero"
+          value={brl(lucroAtual)}
+          sub={
+            <>
+              recebido − despesas
+              {dLucro !== null && (
+                <span className="ml-2">{fmtPct(dLucro)} vs anterior</span>
+              )}
+            </>
+          }
+        />
+      </div>
+
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Stat title="Vendas hoje" value={stats.todayCount} />
-        <Stat title="Total hoje" value={brl(stats.todayTotal)} highlight />
-        <Stat title="Vendas no mês" value={stats.monthCount} />
-        <Stat title="Total no mês" value={brl(stats.monthTotal)} highlight />
-        <Stat title="Despesas no mês" value={brl(stats.monthExpenses)} accent="red" />
-        <Stat
-          title="Lucro estimado"
-          value={brl(profit)}
-          accent={profit >= 0 ? "green" : "red"}
-        />
-        <Stat
-          title="A receber (fiado)"
-          value={brl(stats.receivable)}
+        <DashboardKpi
+          label="A receber (fiado)"
+          icon="📒"
           accent="amber"
+          value={brl(state.receivable)}
+          href="/receber"
+          sub="saldo aberto atual"
         />
-        <Stat
-          title="Estoque (cocos)"
-          value={stats.stock}
-          accent={stats.stock <= 0 ? "red" : "green"}
+        <DashboardKpi
+          label={`Despesas · ${presetLabel.toLowerCase()}`}
+          icon="💸"
+          accent="red"
+          value={brl(state.curExpenses)}
+          href="/despesas"
+        />
+        <DashboardKpi
+          label="Estoque"
+          icon="🥥"
+          accent={
+            state.minStock > 0 && state.stock <= state.minStock
+              ? "red"
+              : state.stock > 0
+              ? "green"
+              : "neutral"
+          }
+          value={`${state.stock} cocos`}
+          href="/estoque"
+          sub={state.minStock > 0 ? `mínimo ${state.minStock}` : undefined}
+        />
+        <DashboardKpi
+          label="Caixa"
+          icon="💵"
+          accent={state.cashOpen ? "green" : "neutral"}
+          value={state.cashOpen ? "Aberto" : "Fechado"}
+          href="/caixa"
+          sub={
+            state.cashOpen && state.cashOpenedAt
+              ? `há ${hoursSince(state.cashOpenedAt) ?? 0}h`
+              : undefined
+          }
         />
       </div>
 
       <div className="card">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-bold text-coco-900">
-            Vendas dos últimos 7 dias
+            Vendas · últimos 14 dias
           </h2>
           <Link href="/relatorios" className="text-coco-700 text-sm underline">
             ver mais
           </Link>
         </div>
-        {series.length > 0 && (
-          <Sparkline values={sparkValues} labels={sparkLabels} />
+        {state.bar14.length > 0 ? (
+          <BarChart points={state.bar14} />
+        ) : (
+          <p className="text-coco-600 text-sm">Sem vendas no intervalo.</p>
         )}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <TopList
+          title="Top vendedores"
+          icon="🏆"
+          items={topSellers}
+          emptyText={`Sem vendas em ${presetLabel.toLowerCase()}.`}
+        />
+        <TopList
+          title="Top clientes"
+          icon="👤"
+          items={topCustomers}
+          emptyText="Sem cliente identificado no período."
+        />
+        <TopList
+          title="Recebido por forma"
+          icon="💳"
+          items={topMethods}
+          emptyText="Nada recebido no período."
+        />
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Link href="/vendas" className="btn-primary text-center text-base">
+          🥥 Nova venda
+        </Link>
+        <Link href="/receber" className="btn-secondary text-center text-base">
+          📒 Receber
+        </Link>
+        <Link href="/despesas" className="btn-secondary text-center text-base">
+          💸 Despesa
+        </Link>
+        <Link href="/cargas" className="btn-secondary text-center text-base">
+          🚚 Cargas
+        </Link>
       </div>
 
       <div className="card">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-bold text-coco-900">Últimas vendas</h2>
           <Link href="/relatorios" className="text-coco-700 text-sm underline">
-            ver todos
+            ver todas
           </Link>
         </div>
         {loading ? (
           <SkeletonRows />
-        ) : recent.length === 0 ? (
+        ) : state.recent.length === 0 ? (
           <p className="text-coco-600">Nenhuma venda registrada ainda.</p>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Data</th>
-                <th>Qtd</th>
-                <th>Unitário</th>
-                <th>Total</th>
-                <th>Pago</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recent.map((s) => (
-                <tr key={s.id} className={s.status === "cancelada" ? "opacity-60" : ""}>
-                  <td>{fmtDate(s.created_at)}</td>
-                  <td>{s.quantity}</td>
-                  <td>{brl(Number(s.unit_price))}</td>
-                  <td className="font-semibold">{brl(Number(s.total))}</td>
-                  <td>{brl(Number(s.paid_amount))}</td>
-                  <td>
-                    <StatusBadge status={s.status} />
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Data</th>
+                  <th>Cliente</th>
+                  <th>Vendedor</th>
+                  <th>Qtd</th>
+                  <th>Total</th>
+                  <th>Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {state.recent.map((s) => (
+                  <tr
+                    key={s.id}
+                    onClick={() => setEditing(s)}
+                    className={`cursor-pointer hover:bg-coco-50 ${
+                      s.status === "cancelada" ? "opacity-60" : ""
+                    }`}
+                  >
+                    <td className="text-coco-500">#{s.code}</td>
+                    <td>{fmtDate(s.created_at)}</td>
+                    <td>
+                      {s.customer_id
+                        ? customerMap[s.customer_id]?.name ?? "—"
+                        : "Consumidor"}
+                    </td>
+                    <td>
+                      {s.seller_id
+                        ? sellerMap[s.seller_id]?.name ?? "—"
+                        : "—"}
+                    </td>
+                    <td>{s.quantity}</td>
+                    <td className="font-semibold">{brl(Number(s.total))}</td>
+                    <td>
+                      <StatusBadge status={s.status} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
-    </div>
-  );
-}
 
-function Stat({
-  title,
-  value,
-  highlight,
-  accent,
-}: {
-  title: string;
-  value: string | number;
-  highlight?: boolean;
-  accent?: "amber" | "red" | "green";
-}) {
-  let cls = "card";
-  if (highlight) cls += " bg-coco-600 text-white border-coco-600";
-  else if (accent === "amber") cls += " bg-amber-50 border-amber-200";
-  else if (accent === "red") cls += " bg-red-50 border-red-200";
-  else if (accent === "green") cls += " bg-green-50 border-green-200";
-  return (
-    <div className={cls}>
-      <div
-        className={`text-xs uppercase tracking-wider ${
-          highlight ? "text-coco-100" : "text-coco-700"
-        }`}
-      >
-        {title}
-      </div>
-      <div className="text-2xl font-bold mt-1">{value}</div>
+      {editing && (
+        <SaleEditor
+          sale={editing}
+          customers={customers}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            load();
+          }}
+        />
+      )}
     </div>
   );
 }
