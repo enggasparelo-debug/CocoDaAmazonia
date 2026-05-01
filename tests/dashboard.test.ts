@@ -5,6 +5,7 @@ import {
   dashboardRange,
   hoursSince,
   last14Days,
+  lastNDays,
   previousRange,
   rangeBoundsIso,
   topBy,
@@ -138,7 +139,7 @@ describe("topBy", () => {
   });
 });
 
-describe("last14Days", () => {
+describe("last14Days / lastNDays", () => {
   it("retorna 14 dias terminando no de referência", () => {
     const ref = new Date(2026, 4, 15, 23);
     const days = last14Days(ref);
@@ -147,6 +148,20 @@ describe("last14Days", () => {
     expect(days[0].getDate()).toBe(2); // 15 - 13
     // todos zerados pra meia-noite
     days.forEach((d) => expect(d.getHours()).toBe(0));
+  });
+  it("lastNDays(7) retorna 7 dias", () => {
+    const ref = new Date(2026, 4, 15);
+    const days = lastNDays(7, ref);
+    expect(days).toHaveLength(7);
+    expect(days[6].getDate()).toBe(15);
+    expect(days[0].getDate()).toBe(9);
+  });
+  it("lastNDays(30) retorna 30 dias e cruza mês", () => {
+    const ref = new Date(2026, 4, 15);
+    const days = lastNDays(30, ref);
+    expect(days).toHaveLength(30);
+    expect(days[29].getMonth()).toBe(4);
+    expect(days[0].getMonth()).toBe(3); // abril
   });
 });
 

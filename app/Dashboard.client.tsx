@@ -10,7 +10,7 @@ import {
   bucketByDay,
   dashboardRange,
   hoursSince,
-  last14Days,
+  lastNDays,
   previousRange,
   rangeBoundsIso,
   topBy,
@@ -51,6 +51,12 @@ type PaymentLite = {
   payment_method_id: string | null;
 };
 
+type ChartSale = {
+  created_at: string;
+  total: number;
+  seller_id: string | null;
+};
+
 type State = {
   // período corrente
   curSales: SaleLite[];
@@ -60,8 +66,8 @@ type State = {
   prevSalesTotal: number;
   prevPaymentsTotal: number;
   prevExpenses: number;
-  // séries fixas
-  bar14: BarPoint[];
+  // série pra gráfico (30d, depois filtrada/recortada no cliente)
+  chart30Sales: ChartSale[];
   recent: Sale[];
   // estado fixo
   receivable: number;
@@ -81,7 +87,7 @@ const EMPTY: State = {
   prevSalesTotal: 0,
   prevPaymentsTotal: 0,
   prevExpenses: 0,
-  bar14: [],
+  chart30Sales: [],
   recent: [],
   receivable: 0,
   oldestOpenIso: null,
@@ -93,6 +99,11 @@ const EMPTY: State = {
   oldestCargaOpenedAt: null,
 };
 
+type ChartDays = 7 | 14 | 30;
+const CHART_DAY_OPTIONS: ChartDays[] = [7, 14, 30];
+
+const WEEKDAY_LABELS = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
+
 export default function DashboardClient() {
   const supabase = createClient();
   const [preset, setPreset] = useState<DashboardPreset>("hoje");
@@ -103,6 +114,9 @@ export default function DashboardClient() {
   const [editing, setEditing] = useState<Sale | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Filtros do gráfico (não mexe nos KPIs / top lists)
+  const [chartDays, setChartDays] = useState<ChartDays>(14);
+  const [chartSellerId, setChartSellerId] = useState<string>("");
 
   const range = useMemo(() => dashboardRange(preset), [preset]);
   const prevR = useMemo(() => previousRange(range), [range]);
@@ -113,8 +127,7 @@ export default function DashboardClient() {
     try {
       const cur = rangeBoundsIso(range);
       const prev = rangeBoundsIso(prevR);
-      const days = last14Days();
-      const bar14Start = days[0].toISOString();
+      const chartStart = lastNDays(30)[0].toISOString();
 
       const [
         curSalesQ,
@@ -123,7 +136,7 @@ export default function DashboardClient() {
         prevSalesQ,
         prevPaymentsQ,
         prevExpensesQ,
-        bar14Q,
+        chartSalesQ,
         recentQ,
         balancesQ,
         stockQ,
@@ -170,8 +183,9 @@ export default function DashboardClient() {
           .lt("paid_at", prev.endIso),
         supabase
           .from("sales")
-          .select("created_at,total,status")
-          .gte("created_at", bar14Start),
+          .select("created_at,total,status,seller_id")
+          .gte("created_at", chartStart)
+          .neq("status", "cancelada"),
         supabase
           .from("sales")
           .select("*")
@@ -202,28 +216,13 @@ export default function DashboardClient() {
         supabase.from("payment_methods").select("*").order("name"),
       ]);
 
-      const bar14Rows = (bar14Q.data ?? []).filter(
-        (r: any) => r.status !== "cancelada"
+      const chart30Sales: ChartSale[] = ((chartSalesQ.data ?? []) as any[]).map(
+        (r) => ({
+          created_at: r.created_at,
+          total: Number(r.total ?? 0),
+          seller_id: r.seller_id ?? null,
+        })
       );
-      const buckets = bucketByDay(
-        bar14Rows as { created_at: string; total: number }[],
-        days,
-        (r) => new Date(r.created_at),
-        (r) => Number(r.total)
-      );
-      const todayKey = days[days.length - 1].toISOString().slice(0, 10);
-      const bar14: BarPoint[] = buckets.map((b) => {
-        const d = new Date(b.date);
-        return {
-          date: b.date,
-          value: b.value,
-          label: d.toLocaleDateString("pt-BR", {
-            day: "2-digit",
-            month: "2-digit",
-          }),
-          highlight: b.date === todayKey,
-        };
-      });
 
       const balances = (balancesQ.data ?? []) as {
         open_balance: number | null;
@@ -266,7 +265,7 @@ export default function DashboardClient() {
         prevSalesTotal: sumTotal(prevSalesQ.data),
         prevPaymentsTotal: sumAmount(prevPaymentsQ.data),
         prevExpenses: sumAmount(prevExpensesQ.data),
-        bar14,
+        chart30Sales,
         recent: (recentQ.data as Sale[]) ?? [],
         receivable,
         oldestOpenIso,
@@ -319,6 +318,46 @@ export default function DashboardClient() {
   const dFat = pctChange(faturado, state.prevSalesTotal);
   const dRec = pctChange(recebido, state.prevPaymentsTotal);
   const dLucro = pctChange(lucroAtual, lucroPrev);
+
+  // Pontos do gráfico — recalculados quando muda o range, o vendedor
+  // filtrado, ou os dados crus.
+  const chartPoints = useMemo<BarPoint[]>(() => {
+    const days = lastNDays(chartDays);
+    const filtered = chartSellerId
+      ? state.chart30Sales.filter((r) => r.seller_id === chartSellerId)
+      : state.chart30Sales;
+    const buckets = bucketByDay(
+      filtered,
+      days,
+      (r) => new Date(r.created_at),
+      (r) => r.total
+    );
+    const todayKey = days[days.length - 1].toISOString().slice(0, 10);
+    return buckets.map((b) => {
+      const d = new Date(b.date);
+      return {
+        date: b.date,
+        value: b.value,
+        label: d.toLocaleDateString("pt-BR", {
+          day: "2-digit",
+          month: "2-digit",
+        }),
+        subLabel: WEEKDAY_LABELS[d.getDay()],
+        highlight: b.date === todayKey,
+      };
+    });
+  }, [chartDays, chartSellerId, state.chart30Sales]);
+
+  const chartSummary = useMemo(() => {
+    const total = chartPoints.reduce((s, p) => s + p.value, 0);
+    const days = chartPoints.length || 1;
+    const avg = total / days;
+    const peak = chartPoints.reduce(
+      (m, p) => (p.value > m.value ? p : m),
+      { value: 0, date: "" } as { value: number; date: string }
+    );
+    return { total, avg, peak };
+  }, [chartPoints]);
 
   const topSellers = useMemo(
     () =>
@@ -545,18 +584,84 @@ export default function DashboardClient() {
       </div>
 
       <div className="card">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-lg font-bold text-coco-900">
-            Vendas · últimos 14 dias
-          </h2>
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
+          <div>
+            <h2 className="text-lg font-bold text-coco-900">
+              Vendas por dia · últimos {chartDays} dias
+              {chartSellerId && sellerMap[chartSellerId] && (
+                <span className="text-coco-600 font-normal text-base ml-1">
+                  · {sellerMap[chartSellerId].name}
+                </span>
+              )}
+            </h2>
+            <p className="text-xs text-coco-600">
+              Total {brl(chartSummary.total)} · média{" "}
+              {brl(chartSummary.avg)}/dia
+              {chartSummary.peak.value > 0 && (
+                <>
+                  {" "}
+                  · melhor dia{" "}
+                  {new Date(chartSummary.peak.date).toLocaleDateString(
+                    "pt-BR",
+                    { day: "2-digit", month: "2-digit" }
+                  )}{" "}
+                  ({brl(chartSummary.peak.value)})
+                </>
+              )}
+            </p>
+          </div>
           <Link href="/relatorios" className="text-coco-700 text-sm underline">
             ver mais
           </Link>
         </div>
-        {state.bar14.length > 0 ? (
-          <BarChart points={state.bar14} />
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <div className="flex gap-1 bg-coco-50 p-1 rounded-xl">
+            {CHART_DAY_OPTIONS.map((d) => (
+              <button
+                key={d}
+                onClick={() => setChartDays(d)}
+                className={`px-3 py-1 text-sm rounded-lg transition-colors ${
+                  chartDays === d
+                    ? "bg-white text-coco-900 shadow-sm font-semibold"
+                    : "text-coco-700 hover:bg-white/60"
+                }`}
+              >
+                {d} dias
+              </button>
+            ))}
+          </div>
+          <select
+            value={chartSellerId}
+            onChange={(e) => setChartSellerId(e.target.value)}
+            className="input !py-1 !w-auto text-sm"
+            aria-label="Filtrar gráfico por vendedor"
+          >
+            <option value="">Todos os vendedores</option>
+            {sellers
+              .filter((s) => s.active || s.id === chartSellerId)
+              .map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                  {s.active ? "" : " (inativo)"}
+                </option>
+              ))}
+          </select>
+          {chartSellerId && (
+            <button
+              onClick={() => setChartSellerId("")}
+              className="text-coco-700 text-xs underline"
+            >
+              limpar filtro
+            </button>
+          )}
+        </div>
+        {chartPoints.length > 0 && chartSummary.total > 0 ? (
+          <BarChart points={chartPoints} />
         ) : (
-          <p className="text-coco-600 text-sm">Sem vendas no intervalo.</p>
+          <p className="text-coco-600 text-sm">
+            Sem vendas no intervalo
+            {chartSellerId ? " pra esse vendedor" : ""}.
+          </p>
         )}
       </div>
 

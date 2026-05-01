@@ -6,39 +6,65 @@ export type BarPoint = {
   date: string; // yyyy-mm-dd
   value: number;
   label?: string; // ex.: "01/05"
+  subLabel?: string; // ex.: "seg"
   highlight?: boolean;
 };
 
+// Arredonda pro próximo "número bonito" pra deixar o eixo Y limpo
+// (1, 2, 5 × 10^k). 0 vira 1.
+function niceMax(v: number): number {
+  if (!Number.isFinite(v) || v <= 0) return 1;
+  const exp = Math.floor(Math.log10(v));
+  const base = Math.pow(10, exp);
+  const f = v / base;
+  const nf = f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10;
+  return nf * base;
+}
+
+// Formata "abreviado" pra rótulos curtos do eixo Y (1.2k, 35k).
+function shortBrl(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, "")}k`;
+  return brl(n).replace("R$", "").trim();
+}
+
 export default function BarChart({
   points,
-  height = 160,
+  height = 220,
   color = "#2c7a4a",
   highlightColor = "#1f5d37",
   showAverage = true,
+  showValues = "auto", // "auto" mostra quando cabem ≤14 barras
 }: {
   points: BarPoint[];
   height?: number;
   color?: string;
   highlightColor?: string;
   showAverage?: boolean;
+  showValues?: "auto" | "always" | "never";
 }) {
   if (!points.length) return null;
-  const max = Math.max(...points.map((p) => p.value), 1);
+  const rawMax = Math.max(...points.map((p) => p.value), 0);
+  const max = niceMax(rawMax);
   const half = max / 2;
   const sum = points.reduce((s, p) => s + p.value, 0);
   const avg = sum / points.length;
 
   const w = 600;
   const h = height;
-  const padTop = 12;
-  const padBottom = 28;
-  const padLeft = 38;
-  const innerW = w - padLeft - 4;
+  const padTop = 22;
+  const padBottom = 36;
+  const padLeft = 44;
+  const innerW = w - padLeft - 6;
   const innerH = h - padTop - padBottom;
   const slot = innerW / points.length;
-  const barW = Math.max(slot * 0.6, 4);
+  const barW = Math.max(slot * 0.62, 4);
 
   const yFor = (v: number) => padTop + innerH - (v / max) * innerH;
+
+  const showVals =
+    showValues === "always" ||
+    (showValues === "auto" && points.length <= 14 && rawMax > 0);
 
   return (
     <svg
@@ -71,13 +97,13 @@ export default function BarChart({
         stroke="#cbd5d0"
         strokeWidth="1"
       />
-      <text x="4" y={padTop + 4} fontSize="10" fill="#5a7a64">
-        {brl(max).replace("R$", "").trim()}
+      <text x="6" y={padTop + 4} fontSize="10" fill="#5a7a64">
+        {shortBrl(max)}
       </text>
-      <text x="4" y={padTop + innerH / 2 + 3} fontSize="10" fill="#5a7a64">
-        {brl(half).replace("R$", "").trim()}
+      <text x="6" y={padTop + innerH / 2 + 3} fontSize="10" fill="#5a7a64">
+        {shortBrl(half)}
       </text>
-      <text x="4" y={padTop + innerH + 3} fontSize="10" fill="#5a7a64">
+      <text x="6" y={padTop + innerH + 3} fontSize="10" fill="#5a7a64">
         0
       </text>
 
@@ -86,30 +112,55 @@ export default function BarChart({
         const y = yFor(p.value);
         const x = padLeft + i * slot + (slot - barW) / 2;
         const fill = p.highlight ? highlightColor : color;
+        const barH = Math.max(padTop + innerH - y, 0);
         return (
           <g key={p.date}>
             <rect
               x={x}
               y={y}
               width={barW}
-              height={Math.max(padTop + innerH - y, 0)}
+              height={barH}
               fill={fill}
               rx="2"
             >
               <title>
-                {p.label ?? p.date} · {brl(p.value)}
+                {p.label ?? p.date}
+                {p.subLabel ? ` (${p.subLabel})` : ""} · {brl(p.value)}
               </title>
             </rect>
+            {showVals && p.value > 0 && (
+              <text
+                x={x + barW / 2}
+                y={y - 4}
+                textAnchor="middle"
+                fontSize="9"
+                fill={p.highlight ? "#1a3a25" : "#3d5d4a"}
+                fontWeight={p.highlight ? "bold" : "normal"}
+              >
+                {shortBrl(p.value)}
+              </text>
+            )}
             {p.label && (
               <text
                 x={x + barW / 2}
-                y={h - 10}
+                y={h - (p.subLabel ? 18 : 10)}
                 textAnchor="middle"
                 fontSize="9"
                 fill={p.highlight ? "#1a3a25" : "#5a7a64"}
                 fontWeight={p.highlight ? "bold" : "normal"}
               >
                 {p.label}
+              </text>
+            )}
+            {p.subLabel && (
+              <text
+                x={x + barW / 2}
+                y={h - 6}
+                textAnchor="middle"
+                fontSize="8"
+                fill={p.highlight ? "#1a3a25" : "#7a958a"}
+              >
+                {p.subLabel}
               </text>
             )}
           </g>
@@ -135,7 +186,7 @@ export default function BarChart({
             fontSize="10"
             fill="#b45309"
           >
-            média {brl(avg).replace("R$", "").trim()}
+            média {shortBrl(avg)}
           </text>
         </g>
       )}
