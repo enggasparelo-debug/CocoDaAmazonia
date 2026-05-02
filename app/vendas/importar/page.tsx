@@ -1,10 +1,14 @@
 import RoleGate from "@/components/RoleGate";
 import ImportClient from "./ImportClient";
 
-export default function Page() {
+export default function Page({
+  searchParams,
+}: {
+  searchParams: { cargaId?: string };
+}) {
   return (
     <RoleGate allow={["admin"]}>
-      <ImportClient />
+      <ImportClient lockedCargaId={searchParams.cargaId ?? null} />
     </RoleGate>
   );
 }

@@ -615,9 +615,17 @@ export default function CargaDetailPage() {
             Vendas ({sales.length})
           </h2>
           {carga.status !== "conferida" && (
-            <button onClick={openNewSale} className="btn-secondary text-sm">
-              + Nova venda
-            </button>
+            <div className="flex gap-2">
+              <Link
+                href={`/vendas/importar?cargaId=${carga.id}`}
+                className="btn-secondary text-sm"
+              >
+                📥 Importar Excel
+              </Link>
+              <button onClick={openNewSale} className="btn-secondary text-sm">
+                + Nova venda
+              </button>
+            </div>
           )}
         </div>
         {sales.length === 0 ? (

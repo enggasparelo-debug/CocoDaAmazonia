@@ -27,7 +27,11 @@ function fmtRowError(err: string) {
   return err;
 }
 
-export default function ImportClient() {
+export default function ImportClient({
+  lockedCargaId = null,
+}: {
+  lockedCargaId?: string | null;
+}) {
   const supabase = createClient();
   const toast = useToast();
 
@@ -38,7 +42,7 @@ export default function ImportClient() {
   const [loading, setLoading] = useState(true);
 
   const [sellerId, setSellerId] = useState("");
-  const [cargaId, setCargaId] = useState("");
+  const [cargaId, setCargaId] = useState(lockedCargaId ?? "");
   const [autoCreateCustomers, setAutoCreateCustomers] = useState(true);
 
   const [parsed, setParsed] = useState<ParsedRow[] | null>(null);
@@ -68,13 +72,25 @@ export default function ImportClient() {
           .eq("active", true)
           .order("name"),
       ]);
-      setSellers((sl.data as Seller[]) ?? []);
-      setCargas((cg.data as Carga[]) ?? []);
+      const sellersList = (sl.data as Seller[]) ?? [];
+      const cargasList = (cg.data as Carga[]) ?? [];
+      setSellers(sellersList);
+      setCargas(cargasList);
       setCustomers((cs.data as Customer[]) ?? []);
       setMethods((pm.data as PaymentMethod[]) ?? []);
+      // Quando travado a uma carga, sugere o vendedor do operador dela.
+      if (lockedCargaId) {
+        const carga = cargasList.find((c) => c.id === lockedCargaId);
+        if (carga) {
+          const opSeller = sellersList.find(
+            (s) => s.user_id === carga.operator_id
+          );
+          if (opSeller) setSellerId(opSeller.id);
+        }
+      }
       setLoading(false);
     })();
-  }, [supabase]);
+  }, [supabase, lockedCargaId]);
 
   // ---------- Erros globais (que não dá pra importar) ---------
   const methodIds = useMemo(
@@ -402,8 +418,11 @@ export default function ImportClient() {
     <div className="space-y-6">
       <header className="flex items-start justify-between flex-wrap gap-3">
         <div>
-          <Link href="/vendas" className="text-coco-700 underline text-sm">
-            ← Voltar pra Vendas
+          <Link
+            href={lockedCargaId ? `/cargas/${lockedCargaId}` : "/vendas"}
+            className="text-coco-700 underline text-sm"
+          >
+            ← Voltar {lockedCargaId ? "pra carga" : "pra Vendas"}
           </Link>
           <h1 className="text-3xl font-bold text-coco-900">
             Importar vendas via Excel
@@ -440,19 +459,35 @@ export default function ImportClient() {
             </p>
           </div>
           <div>
-            <label className="label">Vincular a uma carga (opcional)</label>
+            <label className="label">
+              {lockedCargaId ? "Carga (travada)" : "Vincular a uma carga (opcional)"}
+            </label>
             <select
               className="input"
               value={cargaId}
               onChange={(e) => setCargaId(e.target.value)}
+              disabled={!!lockedCargaId}
             >
-              <option value="">— Sem carga —</option>
+              {!lockedCargaId && <option value="">— Sem carga —</option>}
               {cargas.map((c) => (
                 <option key={c.id} value={c.id}>
                   #{c.code} · {c.status}
                 </option>
               ))}
+              {/* Garante que a carga travada aparece mesmo se não estiver
+                  na lista (ex.: conferida). */}
+              {lockedCargaId &&
+                !cargas.some((c) => c.id === lockedCargaId) && (
+                  <option value={lockedCargaId}>
+                    Carga selecionada
+                  </option>
+                )}
             </select>
+            {lockedCargaId && (
+              <p className="text-xs text-coco-600 mt-1">
+                Vindo da tela de carga — todas as vendas vão pra ela.
+              </p>
+            )}
           </div>
         </div>
         <label className="flex items-center gap-2 text-sm">
