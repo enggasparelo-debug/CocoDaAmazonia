@@ -103,6 +103,15 @@ export default function CargaDetailPage() {
     useState<string>(nowLocalIso());
   const [savingExpense, setSavingExpense] = useState(false);
 
+  // Modal de fechamento (admin pode fechar a carga aqui)
+  const [showClose, setShowClose] = useState(false);
+  const [closeForm, setCloseForm] = useState({
+    remaining: "",
+    declared: "",
+    notes: "",
+  });
+  const [savingClose, setSavingClose] = useState(false);
+
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({
     vehicle_id: "",
@@ -385,6 +394,44 @@ export default function CargaDetailPage() {
     load();
   }
 
+  // ---------- Fechar carga (admin direto na tela) -------------
+  function openClose() {
+    setCloseForm({ remaining: "", declared: "", notes: "" });
+    setShowClose(true);
+  }
+
+  async function fecharCarga() {
+    if (!carga || !summary) return;
+    if (closeForm.remaining === "")
+      return toast.error("Informe a sobra de cocos.");
+    if (closeForm.declared === "")
+      return toast.error("Informe o dinheiro em mão.");
+    const remaining = Math.max(
+      0,
+      parseInt(closeForm.remaining || "0", 10) || 0
+    );
+    const declared =
+      parseFloat((closeForm.declared || "0").replace(",", ".")) || 0;
+    setSavingClose(true);
+    const { error } = await supabase
+      .from("cargas")
+      .update({
+        status: "fechada",
+        closing_cocos_remaining: remaining,
+        closing_cash_declared: declared,
+        closing_notes: closeForm.notes.trim() || null,
+      })
+      .eq("id", carga.id);
+    setSavingClose(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Carga fechada.");
+    setShowClose(false);
+    load();
+  }
+
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -496,6 +543,11 @@ export default function CargaDetailPage() {
                 Reabrir
               </button>
             </>
+          )}
+          {carga.status === "aberta" && (
+            <button onClick={openClose} className="btn-primary">
+              🔒 Fechar carga
+            </button>
           )}
           <button onClick={openEdit} className="btn-ghost">
             ✏️ Editar
@@ -1204,6 +1256,133 @@ export default function CargaDetailPage() {
           </div>
         </div>
       )}
+
+      {showClose && summary && (() => {
+        const remainingNum = Math.max(
+          0,
+          parseInt(closeForm.remaining || "0", 10) || 0
+        );
+        const declaredNum =
+          parseFloat((closeForm.declared || "0").replace(",", ".")) || 0;
+        const lossPreview = Math.max(
+          0,
+          summary.opening_cocos - summary.cocos_vendidos - remainingNum
+        );
+        const cashDiff = declaredNum - Number(summary.expected_cash);
+        return (
+          <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4 overflow-y-auto">
+            <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 my-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-2xl font-bold text-coco-900">
+                  Fechar carga #{carga.code}
+                </h2>
+                <button
+                  onClick={() => setShowClose(false)}
+                  className="btn-ghost"
+                  disabled={savingClose}
+                >
+                  Fechar
+                </button>
+              </div>
+              <div className="space-y-4">
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="label">Sobra de cocos</label>
+                    <input
+                      className="input text-2xl font-bold text-center"
+                      inputMode="numeric"
+                      value={closeForm.remaining}
+                      onChange={(ev) =>
+                        setCloseForm({
+                          ...closeForm,
+                          remaining: ev.target.value.replace(/[^0-9]/g, ""),
+                        })
+                      }
+                      placeholder="0"
+                    />
+                    <p className="text-xs text-coco-600 mt-1">
+                      Saída: {summary.opening_cocos} · Vendidos:{" "}
+                      {summary.cocos_vendidos}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="label">Dinheiro em mão (R$)</label>
+                    <input
+                      className="input text-2xl font-bold text-center"
+                      inputMode="decimal"
+                      value={closeForm.declared}
+                      onChange={(ev) =>
+                        setCloseForm({
+                          ...closeForm,
+                          declared: ev.target.value.replace(/[^0-9.,]/g, ""),
+                        })
+                      }
+                      placeholder="0,00"
+                    />
+                    <p className="text-xs text-coco-600 mt-1">
+                      Esperado: {brl(Number(summary.expected_cash))}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="card !p-3 bg-amber-50 border-amber-200">
+                    <div className="text-xs">Perda calculada</div>
+                    <div className="text-xl font-bold text-amber-800">
+                      {lossPreview} cocos
+                    </div>
+                  </div>
+                  <div
+                    className={`card !p-3 ${
+                      Math.abs(cashDiff) < 0.01
+                        ? "bg-green-50 border-green-200"
+                        : cashDiff > 0
+                        ? "bg-amber-50 border-amber-200"
+                        : "bg-red-50 border-red-200"
+                    }`}
+                  >
+                    <div className="text-xs">Diferença caixa</div>
+                    <div className="text-xl font-bold">{brl(cashDiff)}</div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="label">Observações de fechamento</label>
+                  <textarea
+                    className="input"
+                    rows={2}
+                    value={closeForm.notes}
+                    onChange={(ev) =>
+                      setCloseForm({ ...closeForm, notes: ev.target.value })
+                    }
+                    placeholder="Ex.: cocos quebraram no caminho…"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 mt-5">
+                <button
+                  onClick={() => setShowClose(false)}
+                  className="btn-ghost"
+                  disabled={savingClose}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={fecharCarga}
+                  disabled={
+                    savingClose ||
+                    closeForm.remaining === "" ||
+                    closeForm.declared === ""
+                  }
+                  className="btn-primary"
+                >
+                  {savingClose ? "Fechando…" : "Fechar carga →"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {showReopen && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
