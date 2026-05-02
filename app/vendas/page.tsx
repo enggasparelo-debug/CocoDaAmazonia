@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { brl } from "@/lib/format";
 import type {
@@ -35,7 +36,7 @@ function nowLocalIso(): string {
 export default function VendasPage() {
   const supabase = createClient();
   const toast = useToast();
-  const { seller: mySeller } = useTenant();
+  const { seller: mySeller, isAdmin } = useTenant();
   const [settings, setSettings] = useState<ProductSettings | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
@@ -249,8 +250,15 @@ export default function VendasPage() {
             <strong>{brl(Number(settings?.unit_price ?? 0))}</strong>
           </p>
         </div>
-        <div className="text-xs text-coco-600">
-          Atalhos: F2 fiado · Ctrl+Enter finalizar
+        <div className="flex items-center gap-3">
+          {isAdmin && (
+            <Link href="/vendas/importar" className="btn-secondary">
+              📥 Importar Excel
+            </Link>
+          )}
+          <div className="text-xs text-coco-600">
+            Atalhos: F2 fiado · Ctrl+Enter finalizar
+          </div>
         </div>
       </header>
 
