@@ -616,6 +616,7 @@ export default function CargaDetailPage() {
                   <th>Qtd</th>
                   <th>Total</th>
                   <th>Pago</th>
+                  <th>Em aberto</th>
                   <th>Status</th>
                 </tr>
               </thead>
@@ -628,6 +629,12 @@ export default function CargaDetailPage() {
                   const sl = s.seller_id
                     ? sellers.find((x) => x.id === s.seller_id)?.name ?? "—"
                     : "—";
+                  const open = s.canceled_at
+                    ? 0
+                    : Math.max(
+                        0,
+                        Number(s.total) - Number(s.paid_amount)
+                      );
                   return (
                     <tr
                       key={s.id}
@@ -643,6 +650,13 @@ export default function CargaDetailPage() {
                       <td>{s.quantity}</td>
                       <td>{brl(Number(s.total))}</td>
                       <td>{brl(Number(s.paid_amount))}</td>
+                      <td
+                        className={
+                          open > 0 ? "text-amber-700 font-semibold" : ""
+                        }
+                      >
+                        {brl(open)}
+                      </td>
                       <td>{s.status}</td>
                     </tr>
                   );
