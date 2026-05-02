@@ -16,6 +16,7 @@ import type {
   Route,
   AuditLog,
   Customer,
+  Membership,
   PaymentMethod,
   ProductSettings,
   Seller,
@@ -79,6 +80,7 @@ export default function CargaDetailPage() {
 
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [routes, setRoutes] = useState<Route[]>([]);
+  const [operators, setOperators] = useState<Membership[]>([]);
 
   // Aux data pra os modais de venda/despesa
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -114,6 +116,7 @@ export default function CargaDetailPage() {
 
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({
+    operator_id: "",
     vehicle_id: "",
     route_id: "",
     notes: "",
@@ -183,7 +186,7 @@ export default function CargaDetailPage() {
     setRoute((r.data as Route | null) ?? null);
     setAudit((a.data as AuditLog[]) ?? []);
 
-    const [vs, rs, cs, sl, pm, cat, ps] = await Promise.all([
+    const [vs, rs, cs, sl, pm, cat, ps, ops] = await Promise.all([
       supabase.from("vehicles").select("*").order("plate"),
       supabase.from("routes").select("*").order("name"),
       supabase.from("customers").select("*").order("name"),
@@ -199,6 +202,7 @@ export default function CargaDetailPage() {
         .order("sort_order")
         .order("name"),
       supabase.from("product_settings").select("*").limit(1).maybeSingle(),
+      supabase.from("memberships").select("*").eq("role", "operador"),
     ]);
     setVehicles((vs.data as Vehicle[]) ?? []);
     setRoutes((rs.data as Route[]) ?? []);
@@ -207,11 +211,13 @@ export default function CargaDetailPage() {
     setMethods((pm.data as PaymentMethod[]) ?? []);
     setCategories((cat.data as ExpenseCategory[]) ?? []);
     setProductSettings((ps.data as ProductSettings | null) ?? null);
+    setOperators((ops.data as Membership[]) ?? []);
   }
 
   function openEdit() {
     if (!carga) return;
     setEditForm({
+      operator_id: carga.operator_id,
       vehicle_id: carga.vehicle_id ?? "",
       route_id: carga.route_id ?? "",
       notes: carga.notes ?? "",
@@ -225,9 +231,14 @@ export default function CargaDetailPage() {
 
   async function saveEdit() {
     if (!carga) return;
+    if (!editForm.operator_id) {
+      toast.error("Selecione um operador.");
+      return;
+    }
     setSaving(true);
     const hasSales = sales.length > 0;
     const updates: Record<string, unknown> = {
+      operator_id: editForm.operator_id,
       vehicle_id: editForm.vehicle_id || null,
       route_id: editForm.route_id || null,
       notes: editForm.notes || null,
@@ -565,7 +576,14 @@ export default function CargaDetailPage() {
       <div className="card text-sm space-y-1">
         <div>
           <strong>Operador:</strong>{" "}
-          <span className="font-mono text-xs">{carga.operator_id}</span>
+          {(() => {
+            const sl = sellers.find((s) => s.user_id === carga.operator_id);
+            return sl ? (
+              <span>{sl.name}</span>
+            ) : (
+              <span className="font-mono text-xs">{carga.operator_id}</span>
+            );
+          })()}
         </div>
         <div>
           <strong>Veículo:</strong> {vehicle?.plate ?? "—"}{" "}
@@ -767,6 +785,48 @@ export default function CargaDetailPage() {
               </button>
             </div>
             <div className="space-y-3">
+              <div>
+                <label className="label">Operador *</label>
+                <select
+                  className="input"
+                  value={editForm.operator_id}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, operator_id: e.target.value })
+                  }
+                >
+                  {/* Mantém o operador atual selecionável mesmo se ele não
+                      estiver mais na lista de memberships ativas. */}
+                  {!operators.some(
+                    (o) => o.user_id === editForm.operator_id
+                  ) &&
+                    editForm.operator_id && (
+                      <option value={editForm.operator_id}>
+                        {(() => {
+                          const sl = sellers.find(
+                            (s) => s.user_id === editForm.operator_id
+                          );
+                          return sl
+                            ? `${sl.name} (atual)`
+                            : `${editForm.operator_id.slice(0, 8)}… (atual)`;
+                        })()}
+                      </option>
+                    )}
+                  {operators.map((o) => {
+                    const sl = sellers.find((s) => s.user_id === o.user_id);
+                    return (
+                      <option key={o.user_id} value={o.user_id}>
+                        {sl ? sl.name : `${o.user_id.slice(0, 8)}…`} (operador)
+                      </option>
+                    );
+                  })}
+                </select>
+                {carga.status === "aberta" && (
+                  <p className="text-xs text-amber-700 mt-1">
+                    Trocar operador numa carga aberta falha se o novo já tiver
+                    outra carga aberta.
+                  </p>
+                )}
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="label">Veículo</label>
