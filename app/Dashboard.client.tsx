@@ -135,10 +135,8 @@ export default function DashboardClient() {
 
       const [
         curSalesQ,
-        curPaymentsQ,
         curExpensesQ,
         prevSalesQ,
-        prevPaymentsQ,
         prevExpensesQ,
         chartSalesQ,
         recentQ,
@@ -154,16 +152,11 @@ export default function DashboardClient() {
         supabase
           .from("sales")
           .select(
-            "id,code,total,paid_amount,quantity,customer_id,seller_id,status,created_at"
+            "id,code,total,paid_amount,quantity,customer_id,seller_id,status,created_at,sale_payments(id,amount,paid_at,payment_method_id)"
           )
           .gte("created_at", cur.startIso)
           .lt("created_at", cur.endIso)
           .is("canceled_at", null),
-        supabase
-          .from("sale_payments")
-          .select("id,amount,paid_at,payment_method_id")
-          .gte("paid_at", cur.startIso)
-          .lt("paid_at", cur.endIso),
         supabase
           .from("expenses")
           .select("amount")
@@ -171,15 +164,10 @@ export default function DashboardClient() {
           .lt("paid_at", cur.endIso),
         supabase
           .from("sales")
-          .select("total")
+          .select("total,sale_payments(amount)")
           .gte("created_at", prev.startIso)
           .lt("created_at", prev.endIso)
           .is("canceled_at", null),
-        supabase
-          .from("sale_payments")
-          .select("amount")
-          .gte("paid_at", prev.startIso)
-          .lt("paid_at", prev.endIso),
         supabase
           .from("expenses")
           .select("amount")
@@ -260,20 +248,46 @@ export default function DashboardClient() {
       const sumTotal = (rows: any[] | null | undefined) =>
         (rows ?? []).reduce((s, r) => s + Number(r.total ?? 0), 0);
 
+      // Vendas do período + pagamentos via nested select. Recebido = soma
+      // de TODOS os pagamentos das vendas do período (mesma definição do
+      // /relatorios), independente de quando o pagamento foi feito.
+      const curRows = (curSalesQ.data ?? []) as any[];
+      const curSales: SaleLite[] = curRows.map((s) => ({
+        id: s.id,
+        code: s.code,
+        total: Number(s.total),
+        paid_amount: Number(s.paid_amount),
+        quantity: Number(s.quantity),
+        customer_id: s.customer_id ?? null,
+        seller_id: s.seller_id ?? null,
+        status: s.status,
+        created_at: s.created_at,
+      }));
+      const curPayments: PaymentLite[] = curRows.flatMap((s) =>
+        ((s.sale_payments as any[]) ?? []).map((p) => ({
+          id: p.id,
+          amount: Number(p.amount ?? 0),
+          paid_at: p.paid_at,
+          payment_method_id: p.payment_method_id ?? null,
+        }))
+      );
+      const prevRows = (prevSalesQ.data ?? []) as any[];
+      const prevPaymentsTotal = prevRows.reduce(
+        (s, r) =>
+          s +
+          ((r.sale_payments as any[]) ?? []).reduce(
+            (ss: number, p: any) => ss + Number(p.amount ?? 0),
+            0
+          ),
+        0
+      );
+
       setState({
-        curSales: ((curSalesQ.data ?? []) as SaleLite[]).map((s) => ({
-          ...s,
-          total: Number(s.total),
-          paid_amount: Number(s.paid_amount),
-          quantity: Number(s.quantity),
-        })),
-        curPayments: ((curPaymentsQ.data ?? []) as PaymentLite[]).map((p) => ({
-          ...p,
-          amount: Number(p.amount),
-        })),
+        curSales,
+        curPayments,
         curExpenses: sumAmount(curExpensesQ.data),
         prevSalesTotal: sumTotal(prevSalesQ.data),
-        prevPaymentsTotal: sumAmount(prevPaymentsQ.data),
+        prevPaymentsTotal,
         prevExpenses: sumAmount(prevExpensesQ.data),
         chart30Sales,
         recent: (recentQ.data as Sale[]) ?? [],
