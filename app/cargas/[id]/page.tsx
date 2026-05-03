@@ -443,6 +443,27 @@ export default function CargaDetailPage() {
     load();
   }
 
+  async function resyncInventory() {
+    if (!carga) return;
+    if (
+      !confirm(
+        `Recalcular movimentos de estoque (carga_saida / retorno / perda) com base no estado atual desta carga?`
+      )
+    )
+      return;
+    setSaving(true);
+    const { error } = await supabase.rpc("resync_carga_inventory", {
+      p_carga_id: carga.id,
+    });
+    setSaving(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Movimentos recalculados.");
+    load();
+  }
+
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -560,6 +581,14 @@ export default function CargaDetailPage() {
               🔒 Fechar carga
             </button>
           )}
+          <button
+            onClick={resyncInventory}
+            className="btn-ghost"
+            title="Refaz carga_saida/retorno/perda com base no estado atual"
+            disabled={saving}
+          >
+            🔄 Recalcular movimentos
+          </button>
           <button onClick={openEdit} className="btn-ghost">
             ✏️ Editar
           </button>

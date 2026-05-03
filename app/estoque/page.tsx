@@ -436,7 +436,9 @@ export default function EstoquePage() {
           com os campos atuais da carga e a soma das vendas. Cargas em
           vermelho têm valores que dessincronizaram (ex.: edição de
           opening_cocos depois da abertura, edição de venda em carga
-          fechada). Mostra as 30 mais recentes.
+          fechada). Pra consertar, abra a carga e clique em{" "}
+          <strong>🔄 Recalcular movimentos</strong>. Mostra as 30 mais
+          recentes.
         </p>
         {cargaAudits.length === 0 ? (
           <p className="text-coco-600 text-sm">Sem cargas registradas.</p>
