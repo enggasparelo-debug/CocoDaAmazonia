@@ -52,8 +52,12 @@ type PaymentLite = {
 };
 
 type ChartSale = {
+  id: string;
+  code: number;
   created_at: string;
   total: number;
+  quantity: number;
+  customer_id: string | null;
   seller_id: string | null;
 };
 
@@ -154,7 +158,7 @@ export default function DashboardClient() {
           )
           .gte("created_at", cur.startIso)
           .lt("created_at", cur.endIso)
-          .neq("status", "cancelada"),
+          .is("canceled_at", null),
         supabase
           .from("sale_payments")
           .select("id,amount,paid_at,payment_method_id")
@@ -170,7 +174,7 @@ export default function DashboardClient() {
           .select("total")
           .gte("created_at", prev.startIso)
           .lt("created_at", prev.endIso)
-          .neq("status", "cancelada"),
+          .is("canceled_at", null),
         supabase
           .from("sale_payments")
           .select("amount")
@@ -183,9 +187,11 @@ export default function DashboardClient() {
           .lt("paid_at", prev.endIso),
         supabase
           .from("sales")
-          .select("created_at,total,status,seller_id")
+          .select(
+            "id,code,created_at,total,quantity,customer_id,seller_id"
+          )
           .gte("created_at", chartStart)
-          .neq("status", "cancelada"),
+          .is("canceled_at", null),
         supabase
           .from("sales")
           .select("*")
@@ -218,8 +224,12 @@ export default function DashboardClient() {
 
       const chart30Sales: ChartSale[] = ((chartSalesQ.data ?? []) as any[]).map(
         (r) => ({
+          id: r.id,
+          code: Number(r.code ?? 0),
           created_at: r.created_at,
           total: Number(r.total ?? 0),
+          quantity: Number(r.quantity ?? 0),
+          customer_id: r.customer_id ?? null,
           seller_id: r.seller_id ?? null,
         })
       );
@@ -359,10 +369,23 @@ export default function DashboardClient() {
     return { total, avg, peak };
   }, [chartPoints]);
 
+  // Vendas dentro da janela do gráfico (chartDays). Usado pelos top lists
+  // pra que o ranking sempre cubra um período útil mesmo quando o seletor
+  // principal está em "Hoje".
+  const chartWindowSales = useMemo(() => {
+    const days = lastNDays(chartDays);
+    const startMs = days[0].getTime();
+    const endMs = days[days.length - 1].getTime() + 86_400_000;
+    return state.chart30Sales.filter((s) => {
+      const t = new Date(s.created_at).getTime();
+      return t >= startMs && t < endMs;
+    });
+  }, [chartDays, state.chart30Sales]);
+
   const topSellers = useMemo(
     () =>
       topBy(
-        state.curSales,
+        chartWindowSales,
         (s) => s.seller_id,
         (s) => s.total,
         3
@@ -371,12 +394,12 @@ export default function DashboardClient() {
         label: sellerMap[t.key]?.name ?? "—",
         value: t.value,
       })),
-    [state.curSales, sellerMap]
+    [chartWindowSales, sellerMap]
   );
   const topCustomers = useMemo(
     () =>
       topBy(
-        state.curSales,
+        chartWindowSales,
         (s) => s.customer_id,
         (s) => s.total,
         3
@@ -385,7 +408,7 @@ export default function DashboardClient() {
         label: customerMap[t.key]?.name ?? "—",
         value: t.value,
       })),
-    [state.curSales, customerMap]
+    [chartWindowSales, customerMap]
   );
   const topMethods = useMemo(
     () =>
@@ -665,24 +688,88 @@ export default function DashboardClient() {
         )}
       </div>
 
+      <details className="card">
+        <summary className="cursor-pointer font-bold text-coco-900">
+          🔍 Auditar vendas contabilizadas em{" "}
+          <span className="text-coco-700 font-normal">
+            {presetLabel.toLowerCase()}
+          </span>{" "}
+          ({state.curSales.length})
+        </summary>
+        <p className="text-xs text-coco-600 mt-2">
+          Cada linha aqui é uma venda que entrou no <strong>Faturado</strong>.
+          Vendas canceladas (canceled_at definido) já são filtradas.
+        </p>
+        {state.curSales.length === 0 ? (
+          <p className="text-coco-600 text-sm mt-3">
+            Nada contabilizado nesse período.
+          </p>
+        ) : (
+          <div className="overflow-x-auto mt-3">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Data/hora</th>
+                  <th>Cliente</th>
+                  <th>Vendedor</th>
+                  <th>Qtd</th>
+                  <th>Total</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...state.curSales]
+                  .sort(
+                    (a, b) =>
+                      new Date(b.created_at).getTime() -
+                      new Date(a.created_at).getTime()
+                  )
+                  .map((s) => (
+                    <tr key={s.id}>
+                      <td className="text-coco-500">#{s.code}</td>
+                      <td>{fmtDate(s.created_at)}</td>
+                      <td>
+                        {s.customer_id
+                          ? customerMap[s.customer_id]?.name ?? "—"
+                          : "Consumidor"}
+                      </td>
+                      <td>
+                        {s.seller_id
+                          ? sellerMap[s.seller_id]?.name ?? "—"
+                          : "—"}
+                      </td>
+                      <td>{s.quantity}</td>
+                      <td className="font-semibold">{brl(Number(s.total))}</td>
+                      <td>
+                        <StatusBadge status={s.status} />
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </details>
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <TopList
-          title="Top vendedores"
+          title={`Top vendedores · ${chartDays}d`}
           icon="🏆"
           items={topSellers}
-          emptyText={`Sem vendas em ${presetLabel.toLowerCase()}.`}
+          emptyText={`Sem vendas nos últimos ${chartDays} dias.`}
         />
         <TopList
-          title="Top clientes"
+          title={`Top clientes · ${chartDays}d`}
           icon="👤"
           items={topCustomers}
-          emptyText="Sem cliente identificado no período."
+          emptyText={`Sem cliente identificado nos últimos ${chartDays} dias.`}
         />
         <TopList
-          title="Recebido por forma"
+          title={`Recebido por forma · ${presetLabel.toLowerCase()}`}
           icon="💳"
           items={topMethods}
-          emptyText="Nada recebido no período."
+          emptyText={`Nada recebido em ${presetLabel.toLowerCase()}.`}
         />
       </div>
 
