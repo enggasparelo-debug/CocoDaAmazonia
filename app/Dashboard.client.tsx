@@ -14,7 +14,9 @@ import {
   previousRange,
   rangeBoundsIso,
   topBy,
+  ymdToDate,
 } from "@/lib/dashboard";
+import { fmtYmd } from "@/lib/dateRanges";
 import type {
   Customer,
   PaymentMethod,
@@ -356,9 +358,13 @@ export default function DashboardClient() {
       (r) => new Date(r.created_at),
       (r) => r.total
     );
-    const todayKey = days[days.length - 1].toISOString().slice(0, 10);
+    // todayKey precisa ser yyyy-mm-dd em TZ LOCAL (não UTC). E o
+    // rótulo da barra também é gerado a partir de uma Date construída
+    // em local-midnight, senão fusos negativos mostram "01/05" pra
+    // bucket "2026-05-02" (parsing ISO date-only é UTC).
+    const todayKey = fmtYmd(days[days.length - 1]);
     return buckets.map((b) => {
-      const d = new Date(b.date);
+      const d = ymdToDate(b.date);
       return {
         date: b.date,
         value: b.value,
@@ -638,7 +644,7 @@ export default function DashboardClient() {
                 <>
                   {" "}
                   · melhor dia{" "}
-                  {new Date(chartSummary.peak.date).toLocaleDateString(
+                  {ymdToDate(chartSummary.peak.date).toLocaleDateString(
                     "pt-BR",
                     { day: "2-digit", month: "2-digit" }
                   )}{" "}
