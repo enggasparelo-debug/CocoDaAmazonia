@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { brl, fmtDate } from "@/lib/format";
-import type { InventoryMovement } from "@/lib/types";
+import type { Carga, InventoryMovement } from "@/lib/types";
 import { useToast } from "@/components/Toast";
 import ConfirmModal from "@/components/ConfirmModal";
 
@@ -14,6 +14,23 @@ const MANUAL_KINDS: ManualKind[] = ["entrada", "perda", "ajuste"];
 function isManual(k: string): k is ManualKind {
   return (MANUAL_KINDS as string[]).includes(k);
 }
+
+type CargaAudit = {
+  id: string;
+  code: number;
+  status: Carga["status"];
+  opening_cocos: number;
+  closing_cocos_remaining: number | null;
+  saida_mov: number;
+  retorno_mov: number;
+  perda_mov: number;
+  vendidos: number;
+  expected_perda: number | null; // null pra carga aberta
+  diff_saida: number;
+  diff_retorno: number;
+  diff_perda: number;
+  hasDiscrepancy: boolean;
+};
 
 type Breakdown = {
   entrada: number;
@@ -58,6 +75,7 @@ export default function EstoquePage() {
   const [recentAvulsas, setRecentAvulsas] = useState<
     { id: string; code: number; quantity: number; created_at: string }[]
   >([]);
+  const [cargaAudits, setCargaAudits] = useState<CargaAudit[]>([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({
     kind: "entrada" as ManualKind,
@@ -141,6 +159,87 @@ export default function EstoquePage() {
       vendas_em_carga: pick(vCa),
     });
     setRecentAvulsas((avList.data as any) ?? []);
+
+    // Auditoria por carga: pega últimas 30 cargas e cruza movimentos
+    // de inventário com vendas dela e os campos da carga.
+    const cargasQ = await supabase
+      .from("cargas")
+      .select(
+        "id,code,status,opening_cocos,closing_cocos_remaining"
+      )
+      .order("opened_at", { ascending: false })
+      .limit(30);
+    const cargas = (cargasQ.data as Carga[]) ?? [];
+    const cargaIds = cargas.map((c) => c.id);
+    let movByCarga: Record<
+      string,
+      { saida: number; retorno: number; perda: number }
+    > = {};
+    let salesByCarga: Record<string, number> = {};
+    if (cargaIds.length > 0) {
+      const [mvQ, slQ] = await Promise.all([
+        supabase
+          .from("inventory_movements")
+          .select("carga_id,kind,quantity")
+          .in("carga_id", cargaIds),
+        supabase
+          .from("sales")
+          .select("carga_id,quantity")
+          .in("carga_id", cargaIds)
+          .is("canceled_at", null),
+      ]);
+      for (const m of (mvQ.data as any[]) ?? []) {
+        const id = m.carga_id as string;
+        if (!movByCarga[id])
+          movByCarga[id] = { saida: 0, retorno: 0, perda: 0 };
+        if (m.kind === "carga_saida")
+          movByCarga[id].saida += Number(m.quantity);
+        else if (m.kind === "carga_retorno")
+          movByCarga[id].retorno += Number(m.quantity);
+        else if (m.kind === "carga_perda")
+          movByCarga[id].perda += Number(m.quantity);
+      }
+      for (const s of (slQ.data as any[]) ?? []) {
+        const id = s.carga_id as string;
+        salesByCarga[id] = (salesByCarga[id] ?? 0) + Number(s.quantity);
+      }
+    }
+    const audits: CargaAudit[] = cargas.map((c) => {
+      const mv = movByCarga[c.id] ?? { saida: 0, retorno: 0, perda: 0 };
+      const vendidos = salesByCarga[c.id] ?? 0;
+      const opening = c.opening_cocos ?? 0;
+      const sobra = c.closing_cocos_remaining ?? 0;
+      const isClosed = c.status !== "aberta";
+      const expected_perda = isClosed
+        ? Math.max(0, opening - vendidos - sobra)
+        : null;
+      const diff_saida = mv.saida - opening;
+      const diff_retorno = isClosed ? mv.retorno - sobra : 0;
+      const diff_perda =
+        isClosed && expected_perda !== null
+          ? mv.perda - expected_perda
+          : 0;
+      const hasDiscrepancy =
+        diff_saida !== 0 || diff_retorno !== 0 || diff_perda !== 0;
+      return {
+        id: c.id,
+        code: c.code,
+        status: c.status,
+        opening_cocos: opening,
+        closing_cocos_remaining: c.closing_cocos_remaining,
+        saida_mov: mv.saida,
+        retorno_mov: mv.retorno,
+        perda_mov: mv.perda,
+        vendidos,
+        expected_perda,
+        diff_saida,
+        diff_retorno,
+        diff_perda,
+        hasDiscrepancy,
+      };
+    });
+    setCargaAudits(audits);
+
     setLoading(false);
   }
 
@@ -325,6 +424,136 @@ export default function EstoquePage() {
             <strong>{breakdown.vendas_em_carga}</strong> cocos vendidos via
             cargas até hoje.
           </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <h2 className="font-bold text-coco-900 mb-2">
+          Auditoria por carga
+        </h2>
+        <p className="text-xs text-coco-600 mb-3">
+          Compara movimentos do estoque (carga_saida / retorno / perda)
+          com os campos atuais da carga e a soma das vendas. Cargas em
+          vermelho têm valores que dessincronizaram (ex.: edição de
+          opening_cocos depois da abertura, edição de venda em carga
+          fechada). Mostra as 30 mais recentes.
+        </p>
+        {cargaAudits.length === 0 ? (
+          <p className="text-coco-600 text-sm">Sem cargas registradas.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="table text-xs">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Status</th>
+                  <th className="text-right">Saída</th>
+                  <th className="text-right">vs Opening</th>
+                  <th className="text-right">Retorno</th>
+                  <th className="text-right">vs Sobra</th>
+                  <th className="text-right">Vendidos</th>
+                  <th className="text-right">Perda</th>
+                  <th className="text-right">Esperada</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {cargaAudits.map((a) => {
+                  const cellRed = "text-red-700 font-semibold";
+                  return (
+                    <tr
+                      key={a.id}
+                      className={
+                        a.hasDiscrepancy ? "bg-red-50" : ""
+                      }
+                    >
+                      <td>
+                        <Link
+                          href={`/cargas/${a.id}`}
+                          className="text-coco-700 underline"
+                        >
+                          #{a.code}
+                        </Link>
+                      </td>
+                      <td>{a.status}</td>
+                      <td className="text-right">
+                        {a.saida_mov} / {a.opening_cocos}
+                      </td>
+                      <td
+                        className={`text-right ${
+                          a.diff_saida !== 0 ? cellRed : ""
+                        }`}
+                      >
+                        {a.diff_saida === 0 ? "✓" : a.diff_saida > 0 ? `+${a.diff_saida}` : a.diff_saida}
+                      </td>
+                      <td className="text-right">
+                        {a.status === "aberta"
+                          ? "—"
+                          : `${a.retorno_mov} / ${
+                              a.closing_cocos_remaining ?? "—"
+                            }`}
+                      </td>
+                      <td
+                        className={`text-right ${
+                          a.diff_retorno !== 0 ? cellRed : ""
+                        }`}
+                      >
+                        {a.status === "aberta"
+                          ? "—"
+                          : a.diff_retorno === 0
+                          ? "✓"
+                          : a.diff_retorno > 0
+                          ? `+${a.diff_retorno}`
+                          : a.diff_retorno}
+                      </td>
+                      <td className="text-right">{a.vendidos}</td>
+                      <td className="text-right">
+                        {a.status === "aberta" ? "—" : a.perda_mov}
+                      </td>
+                      <td
+                        className={`text-right ${
+                          a.diff_perda !== 0 ? cellRed : ""
+                        }`}
+                      >
+                        {a.status === "aberta"
+                          ? "—"
+                          : a.expected_perda ?? "—"}
+                        {a.status !== "aberta" && a.diff_perda !== 0 && (
+                          <span className="ml-1 text-xs">
+                            ({a.diff_perda > 0 ? "+" : ""}
+                            {a.diff_perda})
+                          </span>
+                        )}
+                      </td>
+                      <td className="text-right">
+                        {a.hasDiscrepancy ? "⚠" : "✓"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div className="mt-3 text-xs text-coco-600 space-y-1">
+          <p>
+            <strong>Saída vs Opening</strong>: o movimento{" "}
+            <code>carga_saida</code> deve ser igual a{" "}
+            <code>opening_cocos</code>. Diferença geralmente vem de
+            edição de <code>opening_cocos</code> depois da abertura.
+          </p>
+          <p>
+            <strong>Retorno vs Sobra</strong>: o movimento{" "}
+            <code>carga_retorno</code> deve ser igual a{" "}
+            <code>closing_cocos_remaining</code>. Diferença vem de
+            edição da sobra na carga fechada.
+          </p>
+          <p>
+            <strong>Esperada</strong>:{" "}
+            <code>opening − vendidos − sobra</code>. Se{" "}
+            <code>carga_perda</code> ≠ esperada, é porque vendas foram
+            editadas/canceladas após o fechamento.
+          </p>
         </div>
       </div>
 
