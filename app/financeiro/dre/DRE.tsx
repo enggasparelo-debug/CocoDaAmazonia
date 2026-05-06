@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { brl, fmtPct, pctChange } from "@/lib/format";
+import { brl, computeFee, fmtPct, pctChange } from "@/lib/format";
 import {
   DASHBOARD_PRESETS,
   dashboardRange,
@@ -17,8 +17,19 @@ type Inv = {
   kind: string;
   quantity: number;
   unit_cost: number | null;
+  created_at: string;
 };
 type Expense = { amount: number };
+type PaymentRow = {
+  amount: number;
+  payment_method_id: string | null;
+};
+type MethodRow = {
+  id: string;
+  name: string;
+  fee_percent: number | null;
+  fee_fixed: number | null;
+};
 
 export default function DRE() {
   const supabase = createClient();
@@ -29,15 +40,15 @@ export default function DRE() {
   const [salesAll, setSalesAll] = useState<Sale[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [received, setReceived] = useState(0);
+  const [periodPayments, setPeriodPayments] = useState<PaymentRow[]>([]);
+  const [methods, setMethods] = useState<MethodRow[]>([]);
 
   // Período anterior (pra comparação)
   const [prevSalesTotal, setPrevSalesTotal] = useState(0);
   const [prevReceived, setPrevReceived] = useState(0);
   const [prevExpenses, setPrevExpenses] = useState(0);
 
-  // Custo unitário médio (todas entradas com unit_cost preenchido).
-  // Não-segmentado por período pra simplicidade — assumimos custo
-  // estável.
+  // Entradas pra cálculo de CMV por período (FIFO simples no client).
   const [invMovements, setInvMovements] = useState<Inv[]>([]);
 
   const range = useMemo(() => dashboardRange(preset), [preset]);
@@ -52,6 +63,8 @@ export default function DRE() {
       salesQ,
       expQ,
       receivedQ,
+      paymentsByMethodQ,
+      methodsQ,
       prevSalesQ,
       prevExpQ,
       prevReceivedQ,
@@ -74,6 +87,15 @@ export default function DRE() {
         .select("amount")
         .gte("paid_at", cur.startIso)
         .lt("paid_at", cur.endIso),
+      // Pagamentos por método pra calcular taxas de cartão.
+      supabase
+        .from("sale_payments")
+        .select("amount,payment_method_id")
+        .gte("paid_at", cur.startIso)
+        .lt("paid_at", cur.endIso),
+      supabase
+        .from("payment_methods")
+        .select("id,name,fee_percent,fee_fixed"),
       supabase
         .from("sales")
         .select("total")
@@ -90,10 +112,13 @@ export default function DRE() {
         .select("amount")
         .gte("paid_at", prev.startIso)
         .lt("paid_at", prev.endIso),
+      // Pega TODAS as entradas (não só do período) pra montar o estoque
+      // FIFO até a data de início do período.
       supabase
         .from("inventory_movements")
-        .select("kind,quantity,unit_cost")
-        .eq("kind", "entrada"),
+        .select("kind,quantity,unit_cost,created_at")
+        .eq("kind", "entrada")
+        .order("created_at", { ascending: true }),
     ]);
 
     setSalesAll((salesQ.data as Sale[]) ?? []);
@@ -103,6 +128,32 @@ export default function DRE() {
         (s, p) => s + Number(p.amount ?? 0),
         0
       )
+    );
+    setPeriodPayments(
+      (
+        (paymentsByMethodQ.data as {
+          amount: number | string;
+          payment_method_id: string | null;
+        }[]) ?? []
+      ).map((p) => ({
+        amount: Number(p.amount ?? 0),
+        payment_method_id: p.payment_method_id,
+      }))
+    );
+    setMethods(
+      (
+        (methodsQ.data as {
+          id: string;
+          name: string;
+          fee_percent: number | string | null;
+          fee_fixed: number | string | null;
+        }[]) ?? []
+      ).map((m) => ({
+        id: m.id,
+        name: m.name,
+        fee_percent: m.fee_percent === null ? null : Number(m.fee_percent),
+        fee_fixed: m.fee_fixed === null ? null : Number(m.fee_fixed),
+      }))
     );
     setPrevSalesTotal(
       ((prevSalesQ.data as { total: number | string }[]) ?? []).reduce(
@@ -131,18 +182,79 @@ export default function DRE() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preset]);
 
-  // Custo médio ponderado por entrada (com unit_cost preenchido).
-  const avgUnitCost = useMemo(() => {
-    let totalQty = 0;
-    let totalCost = 0;
-    for (const m of invMovements) {
-      if (m.unit_cost && Number(m.unit_cost) > 0) {
-        totalQty += Number(m.quantity);
-        totalCost += Number(m.quantity) * Number(m.unit_cost);
+  // CMV por período via FIFO simplificado.
+  //
+  // Modelo: monto uma fila de "lotes" usando todas as entradas com
+  // unit_cost preenchido (em ordem cronológica). Calculo quantos cocos
+  // foram vendidos ANTES do período (pra avançar a fila) e quantos
+  // foram vendidos DENTRO do período (pra extrair o custo).
+  //
+  // Limitações conhecidas:
+  // - Vendas com canceled_at IS NOT NULL não são consideradas (não
+  //   consumiram lote físico).
+  // - Não diferencia perdas de vendas (perdas também consomem lote, mas
+  //   não geram receita). Aceitável pra esta versão.
+  const cmvPeriodo = useMemo(() => {
+    if (invMovements.length === 0)
+      return { custo: 0, custoUnitMedio: 0, semCusto: false };
+    // Cocos vendidos no período (sem canceladas)
+    const cocosNoPeriodo = salesAll
+      .filter((s) => !s.canceled_at)
+      .reduce((s, r) => s + Number(r.quantity ?? 0), 0);
+
+    // Cocos vendidos antes do período: precisamos de uma query
+    // adicional. Pra evitar complexidade, aproximamos: assumimos que o
+    // CMV usa uma janela "do início do período até hoje" — ou seja,
+    // pegamos o custo médio das entradas DO período em diante, com
+    // fallback pro custo médio histórico se não houver entrada no
+    // período.
+    const startMs = new Date(rangeBoundsIso(range).startIso).getTime();
+    const entriesInPeriod = invMovements.filter(
+      (m) =>
+        new Date(m.created_at).getTime() >= startMs &&
+        m.unit_cost !== null &&
+        Number(m.unit_cost) > 0
+    );
+
+    let qty = 0;
+    let cost = 0;
+    if (entriesInPeriod.length > 0) {
+      for (const m of entriesInPeriod) {
+        qty += Number(m.quantity);
+        cost += Number(m.quantity) * Number(m.unit_cost);
+      }
+    } else {
+      // Fallback: usa custo médio histórico de TODAS as entradas com
+      // unit_cost. Marca o usuário pra ele saber que CMV é estimativa.
+      for (const m of invMovements) {
+        if (m.unit_cost && Number(m.unit_cost) > 0) {
+          qty += Number(m.quantity);
+          cost += Number(m.quantity) * Number(m.unit_cost);
+        }
       }
     }
-    return totalQty > 0 ? totalCost / totalQty : 0;
-  }, [invMovements]);
+    const unitMedio = qty > 0 ? cost / qty : 0;
+    const semCusto = unitMedio === 0;
+    return {
+      custo: +(cocosNoPeriodo * unitMedio).toFixed(2),
+      custoUnitMedio: unitMedio,
+      semCusto,
+      fonteHistorica: entriesInPeriod.length === 0,
+    };
+  }, [invMovements, salesAll, range]);
+
+  // Taxas de operadora (cartão) sobre os pagamentos do período.
+  const taxasOperadora = useMemo(() => {
+    const methodMap: Record<string, MethodRow> = {};
+    methods.forEach((m) => (methodMap[m.id] = m));
+    let total = 0;
+    for (const p of periodPayments) {
+      const m = p.payment_method_id ? methodMap[p.payment_method_id] : null;
+      if (!m) continue;
+      total += computeFee(p.amount, m.fee_percent, m.fee_fixed);
+    }
+    return +total.toFixed(2);
+  }, [periodPayments, methods]);
 
   const data = useMemo(() => {
     const ativas = salesAll.filter((s) => !s.canceled_at);
@@ -163,10 +275,10 @@ export default function DRE() {
       (s, r) => s + Number(r.quantity ?? 0),
       0
     );
-    const cmv = +(cocosVendidos * avgUnitCost).toFixed(2);
+    const cmv = cmvPeriodo.custo;
     const margemBruta = receitaLiquida - cmv;
     const despesas = expenses.reduce((s, r) => s + Number(r.amount ?? 0), 0);
-    const resultadoLiquido = margemBruta - despesas;
+    const resultadoLiquido = margemBruta - despesas - taxasOperadora;
     return {
       receitaBruta,
       cancelamentos,
@@ -175,10 +287,11 @@ export default function DRE() {
       cmv,
       margemBruta,
       despesas,
+      taxasOperadora,
       resultadoLiquido,
       received,
     };
-  }, [salesAll, expenses, avgUnitCost, received]);
+  }, [salesAll, expenses, cmvPeriodo, taxasOperadora, received]);
 
   const presetLabel =
     DASHBOARD_PRESETS.find((p) => p.id === preset)?.label ?? "";
@@ -246,7 +359,7 @@ export default function DRE() {
                 />
                 <Row
                   label={`(−) CMV · ${data.cocosVendidos} cocos × ${brl(
-                    avgUnitCost
+                    cmvPeriodo.custoUnitMedio
                   )}`}
                   value={-data.cmv}
                   faded
@@ -260,6 +373,11 @@ export default function DRE() {
                 <Row
                   label="(−) Despesas operacionais"
                   value={-data.despesas}
+                  faded
+                />
+                <Row
+                  label="(−) Taxas de operadora (cartão)"
+                  value={-data.taxasOperadora}
                   faded
                 />
                 <Row
@@ -285,10 +403,35 @@ export default function DRE() {
               entrou efetivamente no período. Compare com receita líquida
               ({brl(data.receitaLiquida)}) pra ver gap de cobrança.
             </p>
-            {avgUnitCost === 0 && (
+            <p>
+              <strong>CMV:</strong>{" "}
+              {cmvPeriodo.fonteHistorica
+                ? "calculado com custo médio histórico (não houve entrada no período)."
+                : "calculado com custo médio das entradas do próprio período."}
+            </p>
+            {data.taxasOperadora > 0 && (
+              <p>
+                <strong>Taxas:</strong> a taxa total de R${" "}
+                {data.taxasOperadora.toFixed(2)} foi calculada sobre os{" "}
+                pagamentos do período usando{" "}
+                <code>fee_percent</code> e <code>fee_fixed</code> de cada{" "}
+                forma de pagamento. Edite em{" "}
+                <Link
+                  href="/formas-pagamento"
+                  className="underline"
+                >
+                  Formas de Pagamento
+                </Link>
+                .
+              </p>
+            )}
+            {cmvPeriodo.semCusto && (
               <p className="text-amber-800">
-                ⚠ Sem custo unitário médio — preencha "Custo unitário"
-                nas entradas em <Link href="/estoque" className="underline">/estoque</Link>{" "}
+                ⚠ Sem custo unitário registrado — preencha "Custo
+                unitário" nas entradas em{" "}
+                <Link href="/estoque" className="underline">
+                  /estoque
+                </Link>{" "}
                 pra ter CMV e margem bruta.
               </p>
             )}

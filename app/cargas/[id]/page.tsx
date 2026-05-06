@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
@@ -114,6 +114,26 @@ export default function CargaDetailPage() {
     closing_cash_declared: 0,
   });
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // Conta quantas vezes esta carga foi reaberta (status fechada/conferida
+  // → aberta) varrendo o audit_log já carregado.
+  const reopenCount = useMemo(() => {
+    let n = 0;
+    for (const a of audit) {
+      if (a.op !== "UPDATE") continue;
+      const before = (a.before_data ?? {}) as Record<string, unknown>;
+      const after = (a.after_data ?? {}) as Record<string, unknown>;
+      const oldStatus = String(before.status ?? "");
+      const newStatus = String(after.status ?? "");
+      if (
+        (oldStatus === "fechada" || oldStatus === "conferida") &&
+        newStatus === "aberta"
+      ) {
+        n++;
+      }
+    }
+    return n;
+  }, [audit]);
 
   async function load() {
     const { data: c } = await supabase
@@ -534,6 +554,14 @@ export default function CargaDetailPage() {
             >
               {carga.status}
             </span>
+            {reopenCount > 0 && (
+              <span
+                className="badge bg-amber-100 text-amber-800 ml-2"
+                title="Esta carga já foi reaberta após o fechamento. Verifique a auditoria."
+              >
+                ⚠ Reaberta {reopenCount}x
+              </span>
+            )}
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">

@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { brl, fmtBrNumber, parseBrNumber } from "@/lib/format";
+import {
+  brl,
+  computeFee,
+  fmtBrNumber,
+  parseBrNumber,
+} from "@/lib/format";
 
 describe("brl", () => {
   it("formats integer reais", () => {
@@ -56,5 +61,30 @@ describe("fmtBrNumber", () => {
   it("trata Infinity/NaN", () => {
     expect(fmtBrNumber(NaN)).toBe("0,00");
     expect(fmtBrNumber(Infinity)).toBe("0,00");
+  });
+});
+
+describe("computeFee", () => {
+  it("calcula só percentual", () => {
+    expect(computeFee(100, 3.5, 0)).toBe(3.5);
+  });
+  it("calcula só fixo", () => {
+    expect(computeFee(100, 0, 0.4)).toBe(0.4);
+  });
+  it("calcula percentual + fixo", () => {
+    expect(computeFee(100, 3.5, 0.4)).toBe(3.9);
+  });
+  it("zero quando taxa zerada", () => {
+    expect(computeFee(100, 0, 0)).toBe(0);
+  });
+  it("trata null/undefined como zero", () => {
+    expect(computeFee(100, null, undefined)).toBe(0);
+  });
+  it("nunca excede o valor pago", () => {
+    expect(computeFee(10, 99, 100)).toBe(10);
+  });
+  it("zero pra valor zero ou inválido", () => {
+    expect(computeFee(0, 5, 1)).toBe(0);
+    expect(computeFee(NaN, 5, 1)).toBe(0);
   });
 });

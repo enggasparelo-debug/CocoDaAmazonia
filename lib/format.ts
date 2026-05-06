@@ -58,3 +58,18 @@ export function fmtBrNumber(n: number): string {
   if (!Number.isFinite(n)) return "0,00";
   return n.toFixed(2).replace(".", ",");
 }
+
+// Calcula a taxa cobrada pela operadora (cartão, etc.) em um pagamento.
+// Devolve um número ≥ 0. Se a taxa percentual + fixa exceder o valor
+// pago, satura no próprio valor (operadora nunca tira mais que isso).
+export function computeFee(
+  amount: number,
+  feePercent: number | null | undefined,
+  feeFixed: number | null | undefined
+): number {
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  const pct = Math.max(0, Number(feePercent ?? 0));
+  const fixed = Math.max(0, Number(feeFixed ?? 0));
+  const fee = +(amount * (pct / 100) + fixed).toFixed(2);
+  return Math.min(fee, amount);
+}

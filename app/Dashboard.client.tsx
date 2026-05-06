@@ -363,6 +363,40 @@ export default function DashboardClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preset]);
 
+  // Realtime: invalida o painel quando vendas, pagamentos ou despesas
+  // mudam em qualquer lugar do app. Faz reload simples com debounce
+  // pra agrupar bursts (ex.: import de Excel).
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const trigger = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => load(), 1500);
+    };
+    const channel = supabase
+      .channel("dashboard-live")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "sales" },
+        trigger
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "sale_payments" },
+        trigger
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "expenses" },
+        trigger
+      )
+      .subscribe();
+    return () => {
+      if (timer) clearTimeout(timer);
+      supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preset]);
+
   const customerMap = useMemo(() => {
     const m: Record<string, Customer> = {};
     customers.forEach((c) => (m[c.id] = c));

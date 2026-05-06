@@ -10,6 +10,8 @@ const empty: Partial<PaymentMethod> = {
   name: "",
   is_credit: false,
   active: true,
+  fee_percent: 0,
+  fee_fixed: 0,
 };
 
 export default function FormasPagamentoPage() {
@@ -42,6 +44,8 @@ export default function FormasPagamentoPage() {
       name: editing.name!.trim(),
       is_credit: editing.is_credit ?? false,
       active: editing.active ?? true,
+      fee_percent: Number(editing.fee_percent ?? 0),
+      fee_fixed: Number(editing.fee_fixed ?? 0),
     };
     const op = editing.id
       ? supabase.from("payment_methods").update(payload).eq("id", editing.id)
@@ -95,6 +99,7 @@ export default function FormasPagamentoPage() {
               <tr>
                 <th>Nome</th>
                 <th>Tipo</th>
+                <th className="text-right">Taxa</th>
                 <th>Status</th>
                 <th></th>
               </tr>
@@ -112,6 +117,22 @@ export default function FormasPagamentoPage() {
                       <span className="badge bg-coco-100 text-coco-800">
                         à vista
                       </span>
+                    )}
+                  </td>
+                  <td className="text-right text-xs">
+                    {(m.fee_percent ?? 0) > 0 || (m.fee_fixed ?? 0) > 0 ? (
+                      <>
+                        {(m.fee_percent ?? 0) > 0 && (
+                          <span>{Number(m.fee_percent).toFixed(2)}%</span>
+                        )}
+                        {(m.fee_percent ?? 0) > 0 &&
+                          (m.fee_fixed ?? 0) > 0 && <span> + </span>}
+                        {(m.fee_fixed ?? 0) > 0 && (
+                          <span>R$ {Number(m.fee_fixed).toFixed(2)}</span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-coco-500">—</span>
                     )}
                   </td>
                   <td>
@@ -176,6 +197,48 @@ export default function FormasPagamentoPage() {
                 />
                 É venda a prazo (fiado)
               </label>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Taxa %</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="99.99"
+                    className="input"
+                    value={editing.fee_percent ?? 0}
+                    onChange={(e) =>
+                      setEditing({
+                        ...editing,
+                        fee_percent: parseFloat(e.target.value || "0"),
+                      })
+                    }
+                    placeholder="0,00"
+                  />
+                </div>
+                <div>
+                  <label className="label">Taxa fixa (R$)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    className="input"
+                    value={editing.fee_fixed ?? 0}
+                    onChange={(e) =>
+                      setEditing({
+                        ...editing,
+                        fee_fixed: parseFloat(e.target.value || "0"),
+                      })
+                    }
+                    placeholder="0,00"
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-coco-600">
+                Taxa cobrada pela operadora (cartão, etc.). Ex.: 3,50%
+                cartão crédito + R$ 0,40 fixo. O DRE desconta isso pra
+                calcular receita líquida.
+              </p>
               <label className="flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"

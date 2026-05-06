@@ -4,6 +4,7 @@ import AppShell from "@/components/AppShell";
 import { ToastProvider } from "@/components/Toast";
 import RegisterSW from "@/components/RegisterSW";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import GlobalSearch from "@/components/GlobalSearch";
 
 export const metadata: Metadata = {
   title: "Coco da Amazônia · Controle de Vendas",
@@ -33,6 +34,7 @@ export default function RootLayout({
         <ErrorBoundary>
           <ToastProvider>
             <AppShell>{children}</AppShell>
+            <GlobalSearch />
           </ToastProvider>
         </ErrorBoundary>
         <RegisterSW />

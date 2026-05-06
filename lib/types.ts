@@ -48,6 +48,16 @@ export type PaymentMethod = {
   is_credit: boolean;
   active: boolean;
   created_at: string;
+  fee_percent?: number; // ex.: 3.5 = 3.5% de taxa
+  fee_fixed?: number; // R$ por transação
+};
+
+export type ProductPriceHistory = {
+  id: number;
+  tenant_id: string;
+  unit_price: number;
+  started_at: string;
+  changed_by: string | null;
 };
 
 export type SaleStatus = "aberta" | "parcial" | "paga" | "cancelada";

@@ -34,6 +34,10 @@ function ReceberInner() {
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
   const [selected, setSelected] = useState<string>(initialCustomer);
   const [openSales, setOpenSales] = useState<Sale[]>([]);
+  // Todas as vendas em aberto do tenant — usado pra aging por venda.
+  const [allOpenSales, setAllOpenSales] = useState<
+    { id: string; created_at: string; total: number; paid_amount: number }[]
+  >([]);
   const [payingSale, setPayingSale] = useState<Sale | null>(null);
   const [payMethod, setPayMethod] = useState<string>("");
   const [payAmount, setPayAmount] = useState<number>(0);
@@ -52,7 +56,7 @@ function ReceberInner() {
   const [bulkError, setBulkError] = useState<string | null>(null);
 
   async function loadAll() {
-    const [c, b, m] = await Promise.all([
+    const [c, b, m, ao] = await Promise.all([
       supabase.from("customers").select("*").order("name"),
       supabase
         .from("customer_balances")
@@ -65,10 +69,24 @@ function ReceberInner() {
         .eq("active", true)
         .eq("is_credit", false)
         .order("name"),
+      // Todas vendas em aberto do tenant pra aging por venda.
+      supabase
+        .from("sales")
+        .select("id,created_at,total,paid_amount")
+        .neq("status", "paga")
+        .is("canceled_at", null),
     ]);
     setCustomers((c.data as Customer[]) ?? []);
     setBalances((b.data as CustomerBalance[]) ?? []);
     setMethods((m.data as PaymentMethod[]) ?? []);
+    setAllOpenSales(
+      ((ao.data as Sale[]) ?? []).map((s) => ({
+        id: s.id,
+        created_at: s.created_at,
+        total: Number(s.total),
+        paid_amount: Number(s.paid_amount),
+      }))
+    );
     if (m.data && m.data.length > 0) setPayMethod(m.data[0].id);
   }
 
@@ -99,10 +117,9 @@ function ReceberInner() {
     [balances]
   );
 
-  // Aging por cliente, usando oldest_open_at da view customer_balances.
-  // Agrupa em 0-30 / 31-60 / 61-90 / 90+. Conservador: mesmo se o cliente
-  // tem uma venda antiga e uma nova, todo o saldo cai no bucket da mais
-  // antiga.
+  // Aging por VENDA — cada venda em aberto cai no bucket da própria
+  // idade (não da venda mais antiga do cliente). Métrica fiel da
+  // exposição real.
   const aging = useMemo(() => {
     const buckets = {
       ate30: 0,
@@ -111,19 +128,19 @@ function ReceberInner() {
       mais90: 0,
     };
     const now = Date.now();
-    for (const b of balances) {
-      const open = Number(b.open_balance ?? 0);
-      if (open <= 0) continue;
-      const days = b.oldest_open_at
-        ? Math.floor((now - new Date(b.oldest_open_at).getTime()) / 86400000)
-        : 0;
-      if (days <= 30) buckets.ate30 += open;
-      else if (days <= 60) buckets.d31_60 += open;
-      else if (days <= 90) buckets.d61_90 += open;
-      else buckets.mais90 += open;
+    for (const s of allOpenSales) {
+      const remaining = +(s.total - s.paid_amount).toFixed(2);
+      if (remaining <= 0) continue;
+      const days = Math.floor(
+        (now - new Date(s.created_at).getTime()) / 86400000
+      );
+      if (days <= 30) buckets.ate30 += remaining;
+      else if (days <= 60) buckets.d31_60 += remaining;
+      else if (days <= 90) buckets.d61_90 += remaining;
+      else buckets.mais90 += remaining;
     }
     return buckets;
-  }, [balances]);
+  }, [allOpenSales]);
 
   function startPay(s: Sale) {
     setPayingSale(s);
