@@ -4,7 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { brl, fmtDate } from "@/lib/format";
-import type { Carga, CargaStatus, Vehicle } from "@/lib/types";
+import type {
+  Carga,
+  CargaStatus,
+  CargaSummary,
+  Vehicle,
+} from "@/lib/types";
 
 type Row = Carga & {
   total_vendido?: number;
@@ -30,13 +35,13 @@ export default function CargasListPage() {
     const cargas = (cs as Carga[]) ?? [];
 
     const ids = cargas.map((c) => c.id);
-    let summaries: Record<string, any> = {};
+    const summaries: Record<string, CargaSummary> = {};
     if (ids.length > 0) {
       const { data: ss } = await supabase
         .from("carga_summary")
         .select("*")
         .in("carga_id", ids);
-      (ss ?? []).forEach((s: any) => {
+      ((ss as CargaSummary[]) ?? []).forEach((s) => {
         summaries[s.carga_id] = s;
       });
     }

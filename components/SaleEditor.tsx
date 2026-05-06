@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { brl, fmtDate } from "@/lib/format";
+import { isoToLocal, nowLocalIso } from "@/lib/datetime";
 import type {
   Customer,
   PaymentMethod,
@@ -13,18 +14,6 @@ import type {
 import { useToast } from "./Toast";
 import { useTenant } from "@/lib/useTenant";
 import PaymentEditor from "./PaymentEditor";
-
-function nowLocalIso(): string {
-  const d = new Date();
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 16);
-}
-
-function isoToLocal(iso: string): string {
-  const d = new Date(iso);
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 16);
-}
 
 export default function SaleEditor({
   sale,
@@ -454,6 +443,7 @@ export default function SaleEditor({
                           onClick={() => setEditingPayment(p)}
                           className="btn-ghost text-xs px-1.5"
                           title="Editar"
+                          aria-label="Editar pagamento"
                         >
                           ✏️
                         </button>
@@ -461,6 +451,7 @@ export default function SaleEditor({
                           onClick={() => deletePayment(p)}
                           className="btn-ghost text-xs px-1.5 text-red-700"
                           title="Apagar"
+                          aria-label="Apagar pagamento"
                         >
                           🗑
                         </button>

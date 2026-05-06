@@ -4,23 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { brl } from "@/lib/format";
+import { brl, fmtBrNumber, parseBrNumber } from "@/lib/format";
 import type { Customer, PaymentMethod, ProductSettings } from "@/lib/types";
 import PaymentModal from "@/components/PaymentModal";
 import CustomerQuickForm from "@/components/CustomerQuickForm";
 import { useToast } from "@/components/Toast";
 import { useTenant } from "@/lib/useTenant";
-
-function parseBrNumber(s: string): number {
-  if (!s) return 0;
-  const norm = s.replace(/\s/g, "").replace(/\./g, "").replace(",", ".");
-  const n = parseFloat(norm);
-  return isNaN(n) ? 0 : n;
-}
-
-function fmtBrNumber(n: number): string {
-  return n.toFixed(2).replace(".", ",");
-}
 
 export default function CargaSaleForm({
   cargaId,

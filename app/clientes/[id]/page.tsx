@@ -154,7 +154,7 @@ export default function ClienteDetalhePage() {
             <a
               href={wa}
               target="_blank"
-              rel="noreferrer"
+              rel="noopener noreferrer"
               className="btn-secondary"
             >
               📲 WhatsApp do saldo
@@ -220,6 +220,7 @@ export default function ClienteDetalhePage() {
                         <Link
                           href={`/recibo/${sale.id}`}
                           target="_blank"
+                          rel="noopener noreferrer"
                           className="text-coco-700 underline"
                         >
                           venda de {fmtDate(sale.created_at)}
@@ -308,8 +309,10 @@ export default function ClienteDetalhePage() {
                       <Link
                         href={`/recibo/${s.id}`}
                         target="_blank"
+                        rel="noopener noreferrer"
                         className="btn-ghost text-xs"
                         title="Recibo"
+                        aria-label="Abrir recibo"
                       >
                         🧾
                       </Link>

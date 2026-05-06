@@ -17,9 +17,25 @@ const TABLES = [
   "payment_methods",
 ];
 
-function diff(before: any, after: any) {
-  if (!before && after) return Object.entries(after).map(([k, v]) => ({ k, before: "—", after: v }));
-  if (before && !after) return Object.entries(before).map(([k, v]) => ({ k, before: v, after: "—" }));
+type AuditValue = unknown;
+type AuditRow = Record<string, AuditValue> | null;
+type DiffEntry = { k: string; before: AuditValue; after: AuditValue };
+
+function diff(before: AuditRow, after: AuditRow): DiffEntry[] {
+  if (!before && after) {
+    return Object.entries(after).map(([k, v]) => ({
+      k,
+      before: "—",
+      after: v,
+    }));
+  }
+  if (before && !after) {
+    return Object.entries(before).map(([k, v]) => ({
+      k,
+      before: v,
+      after: "—",
+    }));
+  }
   if (!before || !after) return [];
   const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
   return [...keys]

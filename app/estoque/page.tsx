@@ -708,6 +708,7 @@ export default function EstoquePage() {
                             onClick={() => openEdit(m)}
                             className="btn-ghost text-xs px-2"
                             title="Editar"
+                            aria-label="Editar movimento"
                           >
                             ✏️
                           </button>
@@ -715,6 +716,7 @@ export default function EstoquePage() {
                             onClick={() => setConfirmDelete(m)}
                             className="btn-ghost text-xs px-2 text-red-700"
                             title="Apagar"
+                            aria-label="Apagar movimento"
                           >
                             🗑
                           </button>

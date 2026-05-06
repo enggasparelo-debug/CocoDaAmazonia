@@ -25,6 +25,8 @@ export default function ClientesPage() {
   const [editing, setEditing] = useState<Partial<Customer> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -75,10 +77,12 @@ export default function ClientesPage() {
           : null,
       active: editing.active ?? true,
     };
+    setSaving(true);
     const op = editing.id
       ? supabase.from("customers").update(payload).eq("id", editing.id)
       : supabase.from("customers").insert(payload);
     const { error } = await op;
+    setSaving(false);
     if (error) {
       setError(error.message);
       return;
@@ -88,10 +92,13 @@ export default function ClientesPage() {
   }
 
   async function toggleActive(c: Customer) {
+    if (togglingId) return;
+    setTogglingId(c.id);
     await supabase
       .from("customers")
       .update({ active: !c.active })
       .eq("id", c.id);
+    setTogglingId(null);
     load();
   }
 
@@ -187,9 +194,14 @@ export default function ClientesPage() {
                       </button>
                       <button
                         onClick={() => toggleActive(c)}
+                        disabled={togglingId === c.id}
                         className="btn-ghost text-sm"
                       >
-                        {c.active ? "Desativar" : "Ativar"}
+                        {togglingId === c.id
+                          ? "…"
+                          : c.active
+                          ? "Desativar"
+                          : "Ativar"}
                       </button>
                     </td>
                   </tr>
@@ -311,11 +323,19 @@ export default function ClientesPage() {
             )}
 
             <div className="flex justify-end gap-2 mt-5">
-              <button onClick={() => setEditing(null)} className="btn-ghost">
+              <button
+                onClick={() => setEditing(null)}
+                className="btn-ghost"
+                disabled={saving}
+              >
                 Cancelar
               </button>
-              <button onClick={save} className="btn-primary">
-                Salvar
+              <button
+                onClick={save}
+                className="btn-primary"
+                disabled={saving}
+              >
+                {saving ? "…" : "Salvar"}
               </button>
             </div>
           </div>

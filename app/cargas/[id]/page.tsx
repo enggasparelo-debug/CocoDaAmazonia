@@ -25,19 +25,7 @@ import CargaSummaryCards from "@/components/CargaSummaryCards";
 import ConfirmModal from "@/components/ConfirmModal";
 import SaleEditor from "@/components/SaleEditor";
 import { useToast } from "@/components/Toast";
-
-function nowLocalIso(): string {
-  const d = new Date();
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 16);
-}
-
-function isoToLocal(iso: string | null | undefined): string {
-  if (!iso) return nowLocalIso();
-  const d = new Date(iso);
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 16);
-}
+import { isoToLocal, nowLocalIso } from "@/lib/datetime";
 
 type NewSaleForm = {
   seller_id: string;

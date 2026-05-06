@@ -298,7 +298,7 @@ export default function PaymentModal({
               <a
                 href={`/recibo/${saleId}`}
                 target="_blank"
-                rel="noreferrer"
+                rel="noopener noreferrer"
                 className="btn-secondary"
               >
                 🧾 Imprimir comprovante

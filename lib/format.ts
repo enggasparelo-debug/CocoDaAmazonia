@@ -42,3 +42,19 @@ export const fmtPct = (p: number | null, digits = 0): string => {
   const sign = p > 0 ? "+" : "";
   return `${sign}${p.toFixed(digits)}%`;
 };
+
+// Aceita "3", "3,5", "3.50", "1.234,56" etc. Retorna 0 se inválido.
+export function parseBrNumber(s: string | null | undefined): number {
+  if (s === null || s === undefined) return 0;
+  const str = String(s).trim();
+  if (!str) return 0;
+  const norm = str.replace(/\s/g, "").replace(/\./g, "").replace(",", ".");
+  const n = parseFloat(norm);
+  return isNaN(n) ? 0 : n;
+}
+
+// Formata número como string brasileira: "1234.5" → "1234,50".
+export function fmtBrNumber(n: number): string {
+  if (!Number.isFinite(n)) return "0,00";
+  return n.toFixed(2).replace(".", ",");
+}

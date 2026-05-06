@@ -212,17 +212,52 @@ export default function DashboardClient() {
         supabase.from("payment_methods").select("*").order("name"),
       ]);
 
-      const chart30Sales: ChartSale[] = ((chartSalesQ.data ?? []) as any[]).map(
-        (r) => ({
-          id: r.id,
-          code: Number(r.code ?? 0),
-          created_at: r.created_at,
-          total: Number(r.total ?? 0),
-          quantity: Number(r.quantity ?? 0),
-          customer_id: r.customer_id ?? null,
-          seller_id: r.seller_id ?? null,
-        })
-      );
+      type ChartSaleRow = {
+        id: string;
+        code: number | null;
+        created_at: string;
+        total: number | string;
+        quantity: number | string;
+        customer_id: string | null;
+        seller_id: string | null;
+      };
+      type SaleWithPayments = {
+        id: string;
+        code: number;
+        total: number | string;
+        paid_amount: number | string;
+        quantity: number | string;
+        customer_id: string | null;
+        seller_id: string | null;
+        status: SaleLite["status"];
+        created_at: string;
+        sale_payments?:
+          | {
+              id: string;
+              amount: number | string;
+              paid_at: string;
+              payment_method_id: string | null;
+            }[]
+          | null;
+      };
+      type PrevSaleRow = {
+        total: number | string;
+        sale_payments?: { amount: number | string }[] | null;
+      };
+      type AmountRow = { amount: number | string };
+      type TotalRow = { total: number | string };
+
+      const chart30Sales: ChartSale[] = (
+        (chartSalesQ.data ?? []) as ChartSaleRow[]
+      ).map((r) => ({
+        id: r.id,
+        code: Number(r.code ?? 0),
+        created_at: r.created_at,
+        total: Number(r.total ?? 0),
+        quantity: Number(r.quantity ?? 0),
+        customer_id: r.customer_id ?? null,
+        seller_id: r.seller_id ?? null,
+      }));
 
       const balances = (balancesQ.data ?? []) as {
         open_balance: number | null;
@@ -245,15 +280,15 @@ export default function DashboardClient() {
           .filter((x): x is string => !!x)
           .sort()[0] ?? null;
 
-      const sumAmount = (rows: any[] | null | undefined) =>
+      const sumAmount = (rows: AmountRow[] | null | undefined) =>
         (rows ?? []).reduce((s, r) => s + Number(r.amount ?? 0), 0);
-      const sumTotal = (rows: any[] | null | undefined) =>
+      const sumTotal = (rows: TotalRow[] | null | undefined) =>
         (rows ?? []).reduce((s, r) => s + Number(r.total ?? 0), 0);
 
       // Vendas do período + pagamentos via nested select. Recebido = soma
       // de TODOS os pagamentos das vendas do período (mesma definição do
       // /relatorios), independente de quando o pagamento foi feito.
-      const curRows = (curSalesQ.data ?? []) as any[];
+      const curRows = (curSalesQ.data ?? []) as SaleWithPayments[];
       const curSales: SaleLite[] = curRows.map((s) => ({
         id: s.id,
         code: s.code,
@@ -266,39 +301,50 @@ export default function DashboardClient() {
         created_at: s.created_at,
       }));
       const curPayments: PaymentLite[] = curRows.flatMap((s) =>
-        ((s.sale_payments as any[]) ?? []).map((p) => ({
+        (s.sale_payments ?? []).map((p) => ({
           id: p.id,
           amount: Number(p.amount ?? 0),
           paid_at: p.paid_at,
           payment_method_id: p.payment_method_id ?? null,
         }))
       );
-      const prevRows = (prevSalesQ.data ?? []) as any[];
+      const prevRows = (prevSalesQ.data ?? []) as PrevSaleRow[];
       const prevPaymentsTotal = prevRows.reduce(
         (s, r) =>
           s +
-          ((r.sale_payments as any[]) ?? []).reduce(
-            (ss: number, p: any) => ss + Number(p.amount ?? 0),
+          (r.sale_payments ?? []).reduce(
+            (ss: number, p) => ss + Number(p.amount ?? 0),
             0
           ),
         0
       );
 
+      const stockData = (stockQ.data ?? null) as {
+        on_hand: number | null;
+      } | null;
+      const prodData = (prodQ.data ?? null) as {
+        min_stock: number | null;
+      } | null;
+      const cashData = (cashQ.data ?? null) as {
+        id: string;
+        opened_at: string | null;
+      } | null;
+
       setState({
         curSales,
         curPayments,
-        curExpenses: sumAmount(curExpensesQ.data),
-        prevSalesTotal: sumTotal(prevSalesQ.data),
+        curExpenses: sumAmount(curExpensesQ.data as AmountRow[] | null),
+        prevSalesTotal: sumTotal(prevSalesQ.data as TotalRow[] | null),
         prevPaymentsTotal,
-        prevExpenses: sumAmount(prevExpensesQ.data),
+        prevExpenses: sumAmount(prevExpensesQ.data as AmountRow[] | null),
         chart30Sales,
         recent: (recentQ.data as Sale[]) ?? [],
         receivable,
         oldestOpenIso,
-        stock: Number((stockQ.data as any)?.on_hand ?? 0),
-        minStock: Number((prodQ.data as any)?.min_stock ?? 0),
-        cashOpen: !!cashQ.data,
-        cashOpenedAt: (cashQ.data as any)?.opened_at ?? null,
+        stock: Number(stockData?.on_hand ?? 0),
+        minStock: Number(prodData?.min_stock ?? 0),
+        cashOpen: !!cashData,
+        cashOpenedAt: cashData?.opened_at ?? null,
         openCargas: cargasData.length,
         oldestCargaOpenedAt,
       });

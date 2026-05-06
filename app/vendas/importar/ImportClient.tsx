@@ -50,6 +50,7 @@ export default function ImportClient({
   const [importing, setImporting] = useState(false);
   const [fileName, setFileName] = useState<string>("");
   const [progress, setProgress] = useState<string | null>(null);
+  const [importErrors, setImportErrors] = useState<string[]>([]);
 
   useEffect(() => {
     (async () => {
@@ -389,12 +390,12 @@ export default function ImportClient({
 
       if (errors.length > 0) {
         toast.error(
-          `Importou com avisos. Veja o console pra detalhes (${errors.length}).`
+          `Importou com ${errors.length} aviso(s). Veja a lista logo abaixo.`
         );
-        // eslint-disable-next-line no-console
-        console.warn("Import errors:\n" + errors.join("\n"));
+        setImportErrors(errors);
       } else {
         toast.success(`${valid.length} venda(s) importadas.`);
+        setImportErrors([]);
       }
       setProgress(null);
       setParsed(null);
@@ -436,6 +437,34 @@ export default function ImportClient({
           ⬇ Baixar modelo
         </button>
       </header>
+
+      {importErrors.length > 0 && (
+        <div className="card border-amber-300 bg-amber-50">
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="font-bold text-amber-900">
+              Avisos da importação ({importErrors.length})
+            </h2>
+            <button
+              onClick={() => setImportErrors([])}
+              className="btn-ghost text-xs"
+              aria-label="Fechar avisos"
+            >
+              Fechar
+            </button>
+          </div>
+          <p className="text-xs text-amber-800 mb-2">
+            A importação foi concluída, mas algumas linhas tiveram problema.
+            Revise abaixo:
+          </p>
+          <ul className="text-xs space-y-1 max-h-64 overflow-y-auto bg-white border border-amber-200 rounded-lg p-3">
+            {importErrors.map((e, i) => (
+              <li key={i} className="text-amber-900">
+                {e}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="card space-y-4">
         <h2 className="font-bold text-coco-900">Configuração</h2>

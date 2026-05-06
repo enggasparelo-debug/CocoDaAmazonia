@@ -4,6 +4,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { brl, fmtDate } from "@/lib/format";
+import { nowLocalIso } from "@/lib/datetime";
 import type {
   Customer,
   CustomerBalance,
@@ -87,10 +88,7 @@ function ReceberInner() {
   function startPay(s: Sale) {
     setPayingSale(s);
     setPayAmount(+(Number(s.total) - Number(s.paid_amount)).toFixed(2));
-    // default: hoje (formato datetime-local: AAAA-MM-DDTHH:mm)
-    const d = new Date();
-    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-    setPayDate(d.toISOString().slice(0, 16));
+    setPayDate(nowLocalIso());
     setPayNotes("");
     setError(null);
   }
@@ -219,7 +217,7 @@ function ReceberInner() {
                     <a
                       href={wa}
                       target="_blank"
-                      rel="noreferrer"
+                      rel="noopener noreferrer"
                       className="btn-secondary"
                     >
                       📲 WhatsApp

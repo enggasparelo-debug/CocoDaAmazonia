@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { brl } from "@/lib/format";
+import { brl, fmtBrNumber, parseBrNumber } from "@/lib/format";
+import { nowLocalIso } from "@/lib/datetime";
 import type {
   Customer,
   PaymentMethod,
@@ -14,24 +15,6 @@ import PaymentModal from "@/components/PaymentModal";
 import { useToast } from "@/components/Toast";
 import { enqueueSale } from "@/lib/offlineQueue";
 import { useTenant } from "@/lib/useTenant";
-
-// Aceita "3", "3,5", "3.50" etc. Retorna 0 se inválido.
-function parseBrNumber(s: string): number {
-  if (!s) return 0;
-  const norm = s.replace(/\s/g, "").replace(/\./g, "").replace(",", ".");
-  const n = parseFloat(norm);
-  return isNaN(n) ? 0 : n;
-}
-
-function fmtBrNumber(n: number): string {
-  return n.toFixed(2).replace(".", ",");
-}
-
-function nowLocalIso(): string {
-  const d = new Date();
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 16);
-}
 
 export default function VendasPage() {
   const supabase = createClient();

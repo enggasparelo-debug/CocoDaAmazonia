@@ -354,8 +354,10 @@ export default function RelatoriosPage() {
                     <Link
                       href={`/recibo/${s.id}`}
                       target="_blank"
+                      rel="noopener noreferrer"
                       className="btn-ghost text-xs px-2"
                       title="Recibo"
+                      aria-label="Abrir recibo"
                     >
                       🧾
                     </Link>

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { brl, fmtDate } from "@/lib/format";
+import { isoToLocal, nowLocalIso } from "@/lib/datetime";
 import type { Expense, ExpenseCategory, PaymentMethod } from "@/lib/types";
 import { useToast } from "@/components/Toast";
 
@@ -14,19 +15,6 @@ const empty: Partial<Expense> = {
   notes: "",
   payment_method_id: null,
 };
-
-function nowLocalIso(): string {
-  const d = new Date();
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 16);
-}
-
-function isoToLocal(iso: string | null | undefined): string {
-  if (!iso) return nowLocalIso();
-  const d = new Date(iso);
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 16);
-}
 
 export default function DespesasPage() {
   const supabase = createClient();
