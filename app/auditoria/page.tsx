@@ -49,23 +49,32 @@ export default function AuditoriaPage() {
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [filterTable, setFilterTable] = useState<string>("");
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const [emails, setEmails] = useState<Record<string, string>>({});
+  const PAGE_SIZE = 50;
 
-  async function load() {
-    setLoading(true);
+  async function load(reset = true) {
+    if (reset) setLoading(true);
+    else setLoadingMore(true);
+    const from = reset ? 0 : logs.length;
     let q = supabase
       .from("audit_log")
       .select("*")
       .order("at", { ascending: false })
-      .limit(200);
+      .range(from, from + PAGE_SIZE - 1);
     if (filterTable) q = q.eq("table_name", filterTable);
     const { data } = await q;
-    setLogs((data as AuditLog[]) ?? []);
+    const rows = (data as AuditLog[]) ?? [];
+    setLogs((cur) => (reset ? rows : [...cur, ...rows]));
+    setHasMore(rows.length === PAGE_SIZE);
     setLoading(false);
+    setLoadingMore(false);
   }
 
   useEffect(() => {
-    if (!tenantLoading && isAdmin) load();
+    if (!tenantLoading && isAdmin) load(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterTable, isAdmin, tenantLoading]);
 
   if (tenantLoading) return <p className="text-coco-700">Carregando…</p>;
@@ -108,7 +117,10 @@ export default function AuditoriaPage() {
             ))}
           </select>
         </div>
-        <button onClick={load} className="btn-secondary">
+        <button
+          onClick={() => load(true)}
+          className="btn-secondary"
+        >
           Atualizar
         </button>
       </div>
@@ -179,6 +191,17 @@ export default function AuditoriaPage() {
               </li>
             ))}
           </ul>
+        )}
+        {hasMore && (
+          <div className="text-center mt-4">
+            <button
+              onClick={() => load(false)}
+              disabled={loadingMore}
+              className="btn-ghost"
+            >
+              {loadingMore ? "Carregando…" : "Carregar mais"}
+            </button>
+          </div>
         )}
       </div>
     </div>

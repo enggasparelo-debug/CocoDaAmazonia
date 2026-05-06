@@ -23,6 +23,7 @@ type SellerMetrics = {
   cargas_fechadas: number;
   tempo_medio_carga_h: number | null; // só conta cargas fechadas
   diferenca_caixa_total: number;
+  comissao_devida: number; // commission_pct% × faturado + commission_fixed
 };
 
 export default function OperadoresClient() {
@@ -131,6 +132,11 @@ export default function OperadoresClient() {
           (sum, c) => sum + (diffByCarga[c.id] ?? 0),
           0
         );
+        const comissao_devida =
+          +(
+            faturado * (Number(s.commission_pct ?? 0) / 100) +
+            Number(s.commission_fixed ?? 0)
+          ).toFixed(2);
         return {
           seller: s,
           vendas,
@@ -143,6 +149,7 @@ export default function OperadoresClient() {
           cargas_fechadas,
           tempo_medio_carga_h,
           diferenca_caixa_total,
+          comissao_devida,
         };
       })
       .filter((m) => m.vendas > 0 || m.cargas_abertas + m.cargas_fechadas > 0)
@@ -199,6 +206,7 @@ export default function OperadoresClient() {
                 <th className="text-right">Cargas (a/f)</th>
                 <th className="text-right">Tempo médio</th>
                 <th className="text-right">Δ caixa</th>
+                <th className="text-right">Comissão</th>
               </tr>
             </thead>
             <tbody>
@@ -252,6 +260,9 @@ export default function OperadoresClient() {
                     }`}
                   >
                     {brl(m.diferenca_caixa_total)}
+                  </td>
+                  <td className="text-right font-semibold text-coco-900">
+                    {m.comissao_devida > 0 ? brl(m.comissao_devida) : "—"}
                   </td>
                 </tr>
               ))}

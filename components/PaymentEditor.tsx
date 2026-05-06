@@ -4,12 +4,9 @@ import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { PaymentMethod, SalePayment } from "@/lib/types";
 import { useToast } from "./Toast";
-
-function isoToLocal(iso: string): string {
-  const d = new Date(iso);
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 16);
-}
+import { useTenant } from "@/lib/useTenant";
+import { uploadAttachment } from "@/lib/attachments";
+import { isoToLocal } from "@/lib/datetime";
 
 export default function PaymentEditor({
   payment,
@@ -24,14 +21,34 @@ export default function PaymentEditor({
 }) {
   const supabase = createClient();
   const toast = useToast();
+  const { tenant } = useTenant();
   const [methodId, setMethodId] = useState(payment.payment_method_id);
   const [amount, setAmount] = useState<number>(Number(payment.amount));
   const [paidAtLocal, setPaidAtLocal] = useState<string>(
     isoToLocal(payment.paid_at)
   );
   const [notes, setNotes] = useState(payment.notes ?? "");
+  const [attachmentUrl, setAttachmentUrl] = useState<string | null>(
+    payment.attachment_url ?? null
+  );
+  const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  async function handleFile(file: File) {
+    if (!tenant?.id) return setErr("Tenant ainda carregando.");
+    setUploading(true);
+    setErr(null);
+    const { url, error } = await uploadAttachment(supabase, {
+      tenantId: tenant.id,
+      table: "sale_payments",
+      rowId: payment.id,
+      file,
+    });
+    setUploading(false);
+    if (error) return setErr(error);
+    setAttachmentUrl(url);
+  }
 
   async function save() {
     setErr(null);
@@ -50,6 +67,7 @@ export default function PaymentEditor({
         amount,
         paid_at: paidAtIso,
         notes: notes || null,
+        attachment_url: attachmentUrl,
       })
       .eq("id", payment.id);
     setSaving(false);
@@ -113,6 +131,43 @@ export default function PaymentEditor({
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
             />
+          </div>
+          <div>
+            <label className="label">
+              Comprovante (PIX, foto, recibo)
+            </label>
+            <input
+              type="file"
+              accept="image/*,application/pdf"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleFile(f);
+              }}
+              disabled={uploading}
+              className="input"
+            />
+            {uploading && (
+              <p className="text-xs text-coco-600 mt-1">Enviando…</p>
+            )}
+            {attachmentUrl && (
+              <div className="text-xs mt-1 flex items-center gap-2">
+                <a
+                  href={attachmentUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-coco-700 underline"
+                >
+                  Ver anexo
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setAttachmentUrl(null)}
+                  className="text-red-700 underline"
+                >
+                  Remover
+                </button>
+              </div>
+            )}
           </div>
         </div>
         {err && <p className="text-red-700 text-sm mt-3">{err}</p>}

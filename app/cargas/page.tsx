@@ -23,16 +23,23 @@ export default function CargasListPage() {
   const [vehicles, setVehicles] = useState<Record<string, Vehicle>>({});
   const [status, setStatus] = useState<CargaStatus | "">("");
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const PAGE_SIZE = 30;
 
-  async function load() {
-    setLoading(true);
+  async function load(reset = true) {
+    if (reset) setLoading(true);
+    else setLoadingMore(true);
+    const from = reset ? 0 : rows.length;
     let q = supabase
       .from("cargas")
       .select("*")
-      .order("opened_at", { ascending: false });
+      .order("opened_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
     if (status) q = q.eq("status", status);
     const { data: cs } = await q;
     const cargas = (cs as Carga[]) ?? [];
+    setHasMore(cargas.length === PAGE_SIZE);
 
     const ids = cargas.map((c) => c.id);
     const summaries: Record<string, CargaSummary> = {};
@@ -52,18 +59,21 @@ export default function CargasListPage() {
       total_fiado: Number(summaries[c.id]?.total_fiado ?? 0),
       cocos_vendidos: Number(summaries[c.id]?.cocos_vendidos ?? 0),
     }));
-    setRows(merged);
+    setRows((cur) => (reset ? merged : [...cur, ...merged]));
 
-    const { data: vs } = await supabase.from("vehicles").select("*");
-    const vmap: Record<string, Vehicle> = {};
-    ((vs as Vehicle[]) ?? []).forEach((v) => (vmap[v.id] = v));
-    setVehicles(vmap);
+    if (reset) {
+      const { data: vs } = await supabase.from("vehicles").select("*");
+      const vmap: Record<string, Vehicle> = {};
+      ((vs as Vehicle[]) ?? []).forEach((v) => (vmap[v.id] = v));
+      setVehicles(vmap);
+    }
 
     setLoading(false);
+    setLoadingMore(false);
   }
 
   useEffect(() => {
-    load();
+    load(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
@@ -174,6 +184,17 @@ export default function CargasListPage() {
               ))}
             </tbody>
           </table>
+        )}
+        {hasMore && (
+          <div className="text-center mt-4">
+            <button
+              onClick={() => load(false)}
+              disabled={loadingMore}
+              className="btn-ghost"
+            >
+              {loadingMore ? "Carregando…" : "Carregar mais"}
+            </button>
+          </div>
         )}
       </div>
     </div>

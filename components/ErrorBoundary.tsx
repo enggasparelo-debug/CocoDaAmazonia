@@ -15,6 +15,18 @@ export default class ErrorBoundary extends React.Component<Props, State> {
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     // eslint-disable-next-line no-console
     console.error("ErrorBoundary:", error, info);
+    // Reporte ao Sentry se configurado (NEXT_PUBLIC_SENTRY_DSN)
+    if (process.env.NEXT_PUBLIC_SENTRY_DSN) {
+      // Import dinâmico pra não pesar o bundle quando Sentry não está
+      // ativado. Falha silenciosa se SDK não estiver instalado.
+      import("@sentry/nextjs")
+        .then((Sentry) => {
+          Sentry.captureException(error, {
+            contexts: { react: { componentStack: info.componentStack } },
+          });
+        })
+        .catch(() => {});
+    }
   }
 
   reset = () => this.setState({ error: null });

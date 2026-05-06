@@ -60,6 +60,18 @@ export type ProductPriceHistory = {
   changed_by: string | null;
 };
 
+export type SaleReturn = {
+  id: string;
+  tenant_id: string;
+  sale_id: string;
+  quantity: number;
+  amount: number;
+  reason: string | null;
+  returned_at: string;
+  returned_by: string | null;
+  inventory_movement_id: string | null;
+};
+
 export type SaleStatus = "aberta" | "parcial" | "paga" | "cancelada";
 
 export type Sale = {
@@ -90,6 +102,7 @@ export type SalePayment = {
   amount: number;
   paid_at: string;
   notes: string | null;
+  attachment_url?: string | null;
 };
 
 export type CustomerBalance = {
@@ -220,6 +233,8 @@ export type Seller = {
   name: string;
   active: boolean;
   created_at: string;
+  commission_pct?: number;
+  commission_fixed?: number;
 };
 
 export type ExpenseCategory = {
