@@ -6,6 +6,8 @@ import { createClient } from "@/lib/supabase/client";
 import { brl, fmtDate, fmtDateOnly } from "@/lib/format";
 import { nowLocalIso } from "@/lib/datetime";
 import { downloadCsv, downloadXlsx, rowsToCsv } from "@/lib/export";
+import { cobrancaMessage, waLink } from "@/lib/whatsapp";
+import { useTenant } from "@/lib/useTenant";
 import type {
   Customer,
   CustomerBalance,
@@ -24,6 +26,7 @@ export default function ReceberPage() {
 function ReceberInner() {
   const supabase = createClient();
   const params = useSearchParams();
+  const { tenant } = useTenant();
   const initialCustomer = params.get("cliente") ?? "";
 
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -381,13 +384,21 @@ function ReceberInner() {
             {selected && (() => {
               const cust = customers.find((c) => c.id === selected);
               const bal = balances.find((b) => b.customer_id === selected);
-              const phone = cust?.phone?.replace(/\D/g, "") || "";
-              const wa = phone
-                ? `https://wa.me/55${phone}?text=${encodeURIComponent(
-                    `Olá ${cust?.name}! Saldo da sua conta na Coco da Amazônia: ${brl(
-                      Number(bal?.open_balance ?? 0)
-                    )}.`
-                  )}`
+              const wa = cust
+                ? waLink(
+                    cust.phone,
+                    cobrancaMessage({
+                      customerName: cust.name,
+                      storeName: tenant?.name ?? "Coco da Amazônia",
+                      totalOpen: Number(bal?.open_balance ?? 0),
+                      openSales: openSales.map((s) => ({
+                        created_at: s.created_at,
+                        total: Number(s.total),
+                        paid: Number(s.paid_amount),
+                      })),
+                      oldestOpenAt: bal?.oldest_open_at ?? null,
+                    })
+                  )
                 : null;
               return (
                 <div className="flex gap-2 flex-wrap">

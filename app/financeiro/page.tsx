@@ -80,11 +80,19 @@ export default function FinanceiroPage() {
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-3xl font-bold text-coco-900">Financeiro</h1>
-        <p className="text-coco-600">
-          Fluxo de recebimentos por forma de pagamento.
-        </p>
+      <header className="flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-3xl font-bold text-coco-900">Financeiro</h1>
+          <p className="text-coco-600">
+            Fluxo de recebimentos por forma de pagamento.
+          </p>
+        </div>
+        <a
+          href="/financeiro/dre"
+          className="btn-secondary"
+        >
+          📊 Ver DRE
+        </a>
       </header>
 
       <div className="card flex flex-wrap items-end gap-3">
