@@ -158,6 +158,30 @@ export default function CargaSaleForm({
             className="input text-4xl text-center font-bold h-16"
             autoFocus
           />
+          <div className="flex gap-2 mt-2 flex-wrap">
+            {[10, 50, 100, 200, 500].map((n) => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => {
+                  const cur = parseInt(quantity || "0", 10);
+                  setQuantity(String(cur + n));
+                }}
+                className="btn-ghost text-sm px-3 py-1.5"
+                aria-label={`Adicionar ${n} cocos`}
+              >
+                +{n}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setQuantity("")}
+              className="btn-ghost text-sm px-3 py-1.5 text-red-700 ml-auto"
+              aria-label="Limpar quantidade"
+            >
+              limpar
+            </button>
+          </div>
         </div>
 
         <div>

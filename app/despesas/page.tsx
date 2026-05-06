@@ -5,6 +5,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { brl, fmtDate } from "@/lib/format";
 import { isoToLocal, nowLocalIso } from "@/lib/datetime";
+import { downloadCsv, downloadXlsx, rowsToCsv } from "@/lib/export";
 import type { Expense, ExpenseCategory, PaymentMethod } from "@/lib/types";
 import { useToast } from "@/components/Toast";
 
@@ -130,9 +131,53 @@ export default function DespesasPage() {
             Custos do negócio para apurar o lucro real.
           </p>
         </div>
-        <button onClick={openNew} className="btn-primary">
-          + Nova despesa
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => {
+              const rows = expenses.map((e) => ({
+                data: fmtDate(e.paid_at),
+                descricao: e.description,
+                categoria: e.category ?? "",
+                valor: Number(e.amount).toFixed(2),
+                forma:
+                  methods.find((m) => m.id === e.payment_method_id)?.name ??
+                  "",
+                observacao: (e.notes ?? "").replace(/[\n]/g, " "),
+              }));
+              downloadCsv(`despesas_${from}_${to}.csv`, rowsToCsv(rows));
+            }}
+            disabled={expenses.length === 0}
+            className="btn-secondary"
+          >
+            ⬇ CSV
+          </button>
+          <button
+            onClick={async () => {
+              const rows = expenses.map((e) => ({
+                data: fmtDate(e.paid_at),
+                descricao: e.description,
+                categoria: e.category ?? "",
+                valor: Number(e.amount).toFixed(2),
+                forma:
+                  methods.find((m) => m.id === e.payment_method_id)?.name ??
+                  "",
+                observacao: (e.notes ?? "").replace(/[\n]/g, " "),
+              }));
+              await downloadXlsx(
+                `despesas_${from}_${to}.xlsx`,
+                "Despesas",
+                rows
+              );
+            }}
+            disabled={expenses.length === 0}
+            className="btn-secondary"
+          >
+            ⬇ Excel
+          </button>
+          <button onClick={openNew} className="btn-primary">
+            + Nova despesa
+          </button>
+        </div>
       </header>
 
       <div className="card flex flex-wrap items-end gap-3">

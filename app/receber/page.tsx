@@ -3,8 +3,9 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { brl, fmtDate } from "@/lib/format";
+import { brl, fmtDate, fmtDateOnly } from "@/lib/format";
 import { nowLocalIso } from "@/lib/datetime";
+import { downloadCsv, downloadXlsx, rowsToCsv } from "@/lib/export";
 import type {
   Customer,
   CustomerBalance,
@@ -36,6 +37,16 @@ function ReceberInner() {
   const [payDate, setPayDate] = useState<string>("");
   const [payNotes, setPayNotes] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
+
+  // Receber em lote: distribui um único pagamento entre as vendas mais
+  // antigas (FIFO).
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkAmount, setBulkAmount] = useState<number>(0);
+  const [bulkMethod, setBulkMethod] = useState<string>("");
+  const [bulkDate, setBulkDate] = useState<string>("");
+  const [bulkNotes, setBulkNotes] = useState<string>("");
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
 
   async function loadAll() {
     const [c, b, m] = await Promise.all([
@@ -85,6 +96,32 @@ function ReceberInner() {
     [balances]
   );
 
+  // Aging por cliente, usando oldest_open_at da view customer_balances.
+  // Agrupa em 0-30 / 31-60 / 61-90 / 90+. Conservador: mesmo se o cliente
+  // tem uma venda antiga e uma nova, todo o saldo cai no bucket da mais
+  // antiga.
+  const aging = useMemo(() => {
+    const buckets = {
+      ate30: 0,
+      d31_60: 0,
+      d61_90: 0,
+      mais90: 0,
+    };
+    const now = Date.now();
+    for (const b of balances) {
+      const open = Number(b.open_balance ?? 0);
+      if (open <= 0) continue;
+      const days = b.oldest_open_at
+        ? Math.floor((now - new Date(b.oldest_open_at).getTime()) / 86400000)
+        : 0;
+      if (days <= 30) buckets.ate30 += open;
+      else if (days <= 60) buckets.d31_60 += open;
+      else if (days <= 90) buckets.d61_90 += open;
+      else buckets.mais90 += open;
+    }
+    return buckets;
+  }, [balances]);
+
   function startPay(s: Sale) {
     setPayingSale(s);
     setPayAmount(+(Number(s.total) - Number(s.paid_amount)).toFixed(2));
@@ -121,15 +158,156 @@ function ReceberInner() {
     await loadSales(selected);
   }
 
+  // Distribui bulkAmount entre openSales por ordem cronológica (FIFO),
+  // gerando 1 sale_payment por venda atingida. Para na primeira venda
+  // que sobrar resíduo (ela fica parcial).
+  function openBulk() {
+    setBulkAmount(
+      openSales.reduce(
+        (s, x) => s + (Number(x.total) - Number(x.paid_amount)),
+        0
+      )
+    );
+    setBulkMethod(methods[0]?.id ?? "");
+    setBulkDate(nowLocalIso());
+    setBulkNotes("");
+    setBulkError(null);
+    setBulkOpen(true);
+  }
+
+  async function confirmBulk() {
+    setBulkError(null);
+    if (!bulkMethod) return setBulkError("Escolha uma forma de pagamento.");
+    if (bulkAmount <= 0) return setBulkError("Valor inválido.");
+    if (!bulkDate) return setBulkError("Informe a data do pagamento.");
+    const paidAtIso = new Date(bulkDate).toISOString();
+    if (new Date(paidAtIso).getTime() > Date.now() + 60_000) {
+      return setBulkError("A data do pagamento não pode ser no futuro.");
+    }
+
+    let remaining = +bulkAmount.toFixed(2);
+    const inserts: {
+      sale_id: string;
+      payment_method_id: string;
+      amount: number;
+      paid_at: string;
+      notes: string | null;
+    }[] = [];
+    // openSales já vem ordenado por created_at asc.
+    for (const s of openSales) {
+      if (remaining <= 0) break;
+      const rest = +(Number(s.total) - Number(s.paid_amount)).toFixed(2);
+      if (rest <= 0) continue;
+      const apply = Math.min(rest, remaining);
+      inserts.push({
+        sale_id: s.id,
+        payment_method_id: bulkMethod,
+        amount: +apply.toFixed(2),
+        paid_at: paidAtIso,
+        notes: bulkNotes || null,
+      });
+      remaining = +(remaining - apply).toFixed(2);
+    }
+
+    if (inserts.length === 0) {
+      return setBulkError("Sem vendas em aberto pra distribuir.");
+    }
+
+    setBulkSaving(true);
+    const { error } = await supabase.from("sale_payments").insert(inserts);
+    setBulkSaving(false);
+    if (error) {
+      setBulkError(error.message);
+      return;
+    }
+    setBulkOpen(false);
+    await loadAll();
+    await loadSales(selected);
+  }
+
+  function buildAgingRows() {
+    const now = Date.now();
+    return balances
+      .filter((b) => Number(b.open_balance ?? 0) > 0)
+      .map((b) => {
+        const days = b.oldest_open_at
+          ? Math.floor((now - new Date(b.oldest_open_at).getTime()) / 86400000)
+          : 0;
+        return {
+          cliente: b.customer_name,
+          saldo: Number(b.open_balance).toFixed(2),
+          vendas_em_aberto: b.open_sales ?? 0,
+          dias_em_atraso: days,
+          venda_mais_antiga: b.oldest_open_at
+            ? fmtDateOnly(b.oldest_open_at)
+            : "",
+        };
+      });
+  }
+
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-3xl font-bold text-coco-900">Contas a Receber</h1>
-        <p className="text-coco-600">
-          Saldo em aberto por cliente. Total geral:{" "}
-          <strong>{brl(totalOpen)}</strong>
-        </p>
+      <header className="flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-3xl font-bold text-coco-900">Contas a Receber</h1>
+          <p className="text-coco-600">
+            Saldo em aberto por cliente. Total geral:{" "}
+            <strong>{brl(totalOpen)}</strong>
+          </p>
+        </div>
+        {balances.length > 0 && (
+          <div className="flex gap-2">
+            <button
+              onClick={() =>
+                downloadCsv("aging_fiado.csv", rowsToCsv(buildAgingRows()))
+              }
+              className="btn-secondary"
+            >
+              ⬇ CSV
+            </button>
+            <button
+              onClick={() =>
+                downloadXlsx("aging_fiado.xlsx", "Aging", buildAgingRows())
+              }
+              className="btn-secondary"
+            >
+              ⬇ Excel
+            </button>
+          </div>
+        )}
       </header>
+
+      {totalOpen > 0 && (
+        <div className="card">
+          <h2 className="font-bold text-coco-900 mb-3">Aging do fiado</h2>
+          <p className="text-xs text-coco-600 mb-3">
+            Saldo aberto agrupado pela idade da venda mais antiga em
+            aberto de cada cliente.
+          </p>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <AgingBucket
+              label="0–30 dias"
+              value={aging.ate30}
+              tone="green"
+            />
+            <AgingBucket
+              label="31–60 dias"
+              value={aging.d31_60}
+              tone="amber"
+            />
+            <AgingBucket
+              label="61–90 dias"
+              value={aging.d61_90}
+              tone="red"
+            />
+            <AgingBucket
+              label="90+ dias"
+              value={aging.mais90}
+              tone="redDeep"
+            />
+          </div>
+        </div>
+      )}
 
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="card lg:col-span-1">
@@ -212,7 +390,16 @@ function ReceberInner() {
                   )}`
                 : null;
               return (
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
+                  {openSales.length > 0 && (
+                    <button
+                      onClick={openBulk}
+                      className="btn-secondary"
+                      title="Distribui um pagamento entre as vendas mais antigas"
+                    >
+                      💰 Receber tudo
+                    </button>
+                  )}
                   {wa && (
                     <a
                       href={wa}
@@ -356,6 +543,146 @@ function ReceberInner() {
           </div>
         </div>
       )}
+
+      {bulkOpen && (() => {
+        // Preview da distribuição: pra mostrar quantas vendas seriam
+        // afetadas com o valor atual.
+        let remaining = +bulkAmount.toFixed(2);
+        let coveredCount = 0;
+        let lastPartial = 0;
+        for (const s of openSales) {
+          if (remaining <= 0) break;
+          const rest = +(Number(s.total) - Number(s.paid_amount)).toFixed(2);
+          if (rest <= 0) continue;
+          const apply = Math.min(rest, remaining);
+          coveredCount++;
+          if (apply < rest) lastPartial = apply;
+          remaining = +(remaining - apply).toFixed(2);
+        }
+        return (
+          <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
+              <h2 className="text-2xl font-bold text-coco-900 mb-2">
+                Receber em lote
+              </h2>
+              <p className="text-coco-700 text-sm mb-4">
+                Distribui o valor entre as vendas em aberto, da mais antiga
+                pra mais nova. Sobra fica creditada na próxima venda em
+                aberto.
+              </p>
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="label">Forma de pagamento</label>
+                    <select
+                      className="input"
+                      value={bulkMethod}
+                      onChange={(e) => setBulkMethod(e.target.value)}
+                    >
+                      {methods.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="label">Data</label>
+                    <input
+                      type="datetime-local"
+                      className="input"
+                      value={bulkDate}
+                      onChange={(e) => setBulkDate(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="label">Valor recebido</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    className="input text-2xl font-bold"
+                    value={bulkAmount}
+                    onChange={(e) =>
+                      setBulkAmount(parseFloat(e.target.value || "0"))
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="label">Observação (opcional)</label>
+                  <input
+                    className="input"
+                    value={bulkNotes}
+                    onChange={(e) => setBulkNotes(e.target.value)}
+                    placeholder="Ex.: pagamento total da semana…"
+                  />
+                </div>
+                <div className="bg-coco-50 border border-coco-100 rounded-xl p-3 text-sm">
+                  <strong>Vai cobrir {coveredCount} venda(s)</strong>
+                  {lastPartial > 0 && (
+                    <span>
+                      {" "}
+                      · última recebe parcial de {brl(lastPartial)}
+                    </span>
+                  )}
+                  {remaining > 0.01 && (
+                    <span className="text-amber-700">
+                      {" "}
+                      · sobra {brl(remaining)} não distribuída
+                    </span>
+                  )}
+                </div>
+              </div>
+              {bulkError && (
+                <p className="text-red-700 text-sm mt-3">{bulkError}</p>
+              )}
+              <div className="flex justify-end gap-2 mt-5">
+                <button
+                  onClick={() => setBulkOpen(false)}
+                  className="btn-ghost"
+                  disabled={bulkSaving}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={confirmBulk}
+                  disabled={bulkSaving || coveredCount === 0}
+                  className="btn-primary"
+                >
+                  {bulkSaving ? "…" : "Confirmar"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+function AgingBucket({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "green" | "amber" | "red" | "redDeep";
+}) {
+  const cls =
+    tone === "green"
+      ? "bg-green-50 border-green-200 text-green-900"
+      : tone === "amber"
+      ? "bg-amber-50 border-amber-200 text-amber-900"
+      : tone === "red"
+      ? "bg-red-50 border-red-200 text-red-900"
+      : "bg-red-100 border-red-300 text-red-900";
+  return (
+    <div className={`rounded-xl border p-3 ${cls}`}>
+      <div className="text-xs uppercase tracking-wider opacity-80">
+        {label}
+      </div>
+      <div className="text-xl font-bold mt-1">{brl(value)}</div>
     </div>
   );
 }

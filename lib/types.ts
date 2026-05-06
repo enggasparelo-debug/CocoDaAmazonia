@@ -186,6 +186,7 @@ export type Carga = {
   conferred_at: string | null;
   conferred_by: string | null;
   notes: string | null;
+  lock_version?: number;
 };
 
 export type FiadoPromissoria = {

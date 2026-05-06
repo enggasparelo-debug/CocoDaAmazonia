@@ -412,7 +412,8 @@ export default function CargaDetailPage() {
     const declared =
       parseFloat((closeForm.declared || "0").replace(",", ".")) || 0;
     setSavingClose(true);
-    const { error } = await supabase
+    // Optimistic lock: só atualiza se lock_version não mudou desde o load.
+    let q = supabase
       .from("cargas")
       .update({
         status: "fechada",
@@ -421,9 +422,20 @@ export default function CargaDetailPage() {
         closing_notes: closeForm.notes.trim() || null,
       })
       .eq("id", carga.id);
+    if (carga.lock_version !== undefined) {
+      q = q.eq("lock_version", carga.lock_version);
+    }
+    const { data, error } = await q.select("id");
     setSavingClose(false);
     if (error) {
       toast.error(error.message);
+      return;
+    }
+    if (!data || data.length === 0) {
+      toast.error(
+        "Outra pessoa atualizou a carga ao mesmo tempo. Recarregando…"
+      );
+      load();
       return;
     }
     toast.success("Carga fechada.");

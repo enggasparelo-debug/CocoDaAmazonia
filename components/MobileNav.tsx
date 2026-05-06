@@ -27,6 +27,7 @@ const items: NavItem[] = [
   { href: "/despesas", label: "Despesas", icon: "💸", roles: ["admin"] },
   { href: "/estoque", label: "Estoque", icon: "📦", roles: ["admin"] },
   { href: "/financeiro", label: "Financeiro", icon: "💰", roles: ["admin"] },
+  { href: "/operadores", label: "Operadores", icon: "🧑‍💼", roles: ["admin"] },
   { href: "/relatorios", label: "Relatórios", icon: "📈", roles: ["admin"] },
   { href: "/configuracoes", label: "Configurações", icon: "⚙️", roles: ["admin"] },
   { href: "/auditoria", label: "Auditoria", icon: "🔍", roles: ["admin"] },
