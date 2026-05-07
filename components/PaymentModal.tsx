@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { errorMessage } from "@/lib/ui";
 import { createClient } from "@/lib/supabase/client";
 import { brl } from "@/lib/format";
 import type { PaymentMethod } from "@/lib/types";
@@ -96,8 +97,8 @@ export default function PaymentModal({
         if (error) throw error;
       }
       setDone(true);
-    } catch (e: any) {
-      setError(e.message ?? String(e));
+    } catch (e: unknown) {
+      setError(errorMessage(e));
     } finally {
       setSaving(false);
     }

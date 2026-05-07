@@ -9,6 +9,13 @@ import { useToast } from "@/components/Toast";
 import ConfirmModal from "@/components/ConfirmModal";
 
 type ManualKind = "entrada" | "perda" | "ajuste";
+
+type RecentAvulsa = {
+  id: string;
+  code: number;
+  quantity: number;
+  created_at: string;
+};
 const MANUAL_KINDS: ManualKind[] = ["entrada", "perda", "ajuste"];
 
 function isManual(k: string): k is ManualKind {
@@ -72,9 +79,7 @@ export default function EstoquePage() {
   const [movements, setMovements] = useState<InventoryMovement[]>([]);
   const [onHand, setOnHand] = useState<number>(0);
   const [breakdown, setBreakdown] = useState<Breakdown>(ZERO_BREAKDOWN);
-  const [recentAvulsas, setRecentAvulsas] = useState<
-    { id: string; code: number; quantity: number; created_at: string }[]
-  >([]);
+  const [recentAvulsas, setRecentAvulsas] = useState<RecentAvulsa[]>([]);
   const [cargaAudits, setCargaAudits] = useState<CargaAudit[]>([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({
@@ -145,9 +150,10 @@ export default function EstoquePage() {
         .order("created_at", { ascending: false })
         .limit(8),
     ]);
-    const pick = (q: any) => Number((q.data as any)?.[0]?.sum ?? 0);
+    const pick = (q: { data: { sum: number | string }[] | null }) =>
+      Number(q.data?.[0]?.sum ?? 0);
     setMovements((m.data as InventoryMovement[]) ?? []);
-    setOnHand((b.data as any)?.on_hand ?? 0);
+    setOnHand((b.data as { on_hand: number } | null)?.on_hand ?? 0);
     setBreakdown({
       entrada: pick(ent),
       ajuste: pick(aj),
@@ -158,7 +164,9 @@ export default function EstoquePage() {
       vendas_avulsas: pick(vAv),
       vendas_em_carga: pick(vCa),
     });
-    setRecentAvulsas((avList.data as any) ?? []);
+    setRecentAvulsas(
+      (avList.data as RecentAvulsa[] | null) ?? []
+    );
 
     // Auditoria por carga: pega últimas 30 cargas e cruza movimentos
     // de inventário com vendas dela e os campos da carga.
@@ -188,8 +196,14 @@ export default function EstoquePage() {
           .in("carga_id", cargaIds)
           .is("canceled_at", null),
       ]);
-      for (const m of (mvQ.data as any[]) ?? []) {
-        const id = m.carga_id as string;
+      type MvRow = {
+        carga_id: string;
+        kind: InventoryMovement["kind"];
+        quantity: number | string;
+      };
+      type SaleRow = { carga_id: string; quantity: number | string };
+      for (const m of (mvQ.data as MvRow[] | null) ?? []) {
+        const id = m.carga_id;
         if (!movByCarga[id])
           movByCarga[id] = { saida: 0, retorno: 0, perda: 0 };
         if (m.kind === "carga_saida")
@@ -199,8 +213,8 @@ export default function EstoquePage() {
         else if (m.kind === "carga_perda")
           movByCarga[id].perda += Number(m.quantity);
       }
-      for (const s of (slQ.data as any[]) ?? []) {
-        const id = s.carga_id as string;
+      for (const s of (slQ.data as SaleRow[] | null) ?? []) {
+        const id = s.carga_id;
         salesByCarga[id] = (salesByCarga[id] ?? 0) + Number(s.quantity);
       }
     }
@@ -607,7 +621,10 @@ export default function EstoquePage() {
               className="input"
               value={form.kind}
               onChange={(e) =>
-                setForm({ ...form, kind: e.target.value as any })
+                setForm({
+                  ...form,
+                  kind: e.target.value as ManualKind,
+                })
               }
             >
               <option value="entrada">Entrada (compra)</option>

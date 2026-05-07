@@ -45,18 +45,23 @@ export default function AbrirCargaPage() {
       ]);
       setVehicles((v.data as Vehicle[]) ?? []);
       setRoutes((r.data as Route[]) ?? []);
-      setStock(((inv.data as any)?.on_hand as number) ?? 0);
+      setStock(
+        Number((inv.data as { on_hand: number } | null)?.on_hand ?? 0)
+      );
 
       if (isAdmin) {
         const { data: ms } = await supabase
           .from("memberships")
           .select("user_id, role");
-        setOperators(((ms as any[]) ?? []).map((m) => ({ user_id: m.user_id })));
+        setOperators(
+          ((ms as { user_id: string }[] | null) ?? []).map((m) => ({
+            user_id: m.user_id,
+          }))
+        );
       }
       setLoading(false);
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAdmin]);
+  }, [isAdmin, supabase]);
 
   async function save() {
     setErr(null);

@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useState } from "react";
+import { errorMessage } from "@/lib/ui";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
@@ -52,8 +53,8 @@ function LoginInner() {
           setMode("signin");
         }
       }
-    } catch (e: any) {
-      setError(e.message ?? String(e));
+    } catch (e: unknown) {
+      setError(errorMessage(e));
     } finally {
       setLoading(false);
     }

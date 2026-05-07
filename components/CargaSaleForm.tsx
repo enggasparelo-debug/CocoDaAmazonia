@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { errorMessage } from "@/lib/ui";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -51,7 +52,7 @@ export default function CargaSaleForm({
     [qty, unitPrice]
   );
 
-  async function loadData() {
+  const loadData = useCallback(async () => {
     const [s, c, m] = await Promise.all([
       supabase.from("product_settings").select("*").limit(1).maybeSingle(),
       supabase.from("customers").select("*").eq("active", true).order("name"),
@@ -67,12 +68,11 @@ export default function CargaSaleForm({
     }
     setCustomers((c.data as Customer[]) ?? []);
     setMethods((m.data as PaymentMethod[]) ?? []);
-  }
+  }, [supabase]);
 
   useEffect(() => {
     loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadData]);
 
   function reset() {
     setQuantity("");
@@ -108,8 +108,8 @@ export default function CargaSaleForm({
         total: Number(data.total),
         hasCustomer: !!data.customer_id,
       });
-    } catch (e: any) {
-      toast.error(e.message ?? String(e));
+    } catch (e: unknown) {
+      toast.error(errorMessage(e));
     } finally {
       setSaving(false);
     }

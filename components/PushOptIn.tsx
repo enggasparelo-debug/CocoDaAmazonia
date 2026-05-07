@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { errorMessage } from "@/lib/ui";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "./Toast";
 
@@ -67,8 +68,8 @@ export default function PushOptIn() {
       if (error) throw error;
       setSubscribed(true);
       toast.success("Notificações ativadas.");
-    } catch (e: any) {
-      toast.error(e.message ?? String(e));
+    } catch (e: unknown) {
+      toast.error(errorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -88,8 +89,8 @@ export default function PushOptIn() {
       }
       setSubscribed(false);
       toast.info("Notificações desativadas.");
-    } catch (e: any) {
-      toast.error(e.message ?? String(e));
+    } catch (e: unknown) {
+      toast.error(errorMessage(e));
     } finally {
       setBusy(false);
     }

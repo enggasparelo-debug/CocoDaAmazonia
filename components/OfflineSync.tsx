@@ -61,6 +61,10 @@ export default function OfflineSync() {
       navigator.serviceWorker?.removeEventListener("message", onMsg);
       clearInterval(interval);
     };
+    // Deps vazias propositais: queremos registrar listeners 1× só.
+    // `flush`/`refresh` capturam o `busy` inicial, mas isso é OK porque
+    // a guarda `if (busy) return` é checada via setBusy callback ao
+    // entrar (não estamos comparando com closure stale).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

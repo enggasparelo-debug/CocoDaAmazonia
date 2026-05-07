@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { errorMessage } from "@/lib/ui";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
@@ -344,8 +345,8 @@ export default function CargaDetailPage() {
       await load();
       // Abre o editor pra lançar pagamentos na nova venda.
       setEditingSale(data as Sale);
-    } catch (e: any) {
-      toast.error(e.message ?? String(e));
+    } catch (e: unknown) {
+      toast.error(errorMessage(e));
     } finally {
       setSavingSale(false);
     }

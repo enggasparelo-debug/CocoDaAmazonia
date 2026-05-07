@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
@@ -27,7 +27,7 @@ export default function PromissoriaPage() {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  async function load() {
+  const load = useCallback(async () => {
     const [sQ, pQ] = await Promise.all([
       supabase.from("sales").select("*").eq("id", saleId).maybeSingle(),
       supabase
@@ -55,12 +55,11 @@ export default function PromissoriaPage() {
         .maybeSingle();
       setTenant((t as Tenant | null) ?? null);
     }
-  }
+  }, [saleId, supabase]);
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [saleId]);
+  }, [load]);
 
   if (!sale) {
     return <div className="p-6 text-coco-700">Carregando…</div>;

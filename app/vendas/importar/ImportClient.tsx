@@ -23,10 +23,6 @@ async function loadExcel() {
   return ExcelJS;
 }
 
-function fmtRowError(err: string) {
-  return err;
-}
-
 export default function ImportClient({
   lockedCargaId = null,
 }: {
@@ -259,9 +255,13 @@ export default function ImportClient({
           const c = idx[h];
           if (!c) return null;
           const v = row.getCell(c).value;
-          // ExcelJS pode retornar { result: number, formula: string }
-          if (v && typeof v === "object" && "result" in (v as any)) {
-            return (v as any).result ?? null;
+          // ExcelJS pode retornar { result, formula } pra células com fórmula.
+          if (
+            v &&
+            typeof v === "object" &&
+            "result" in (v as object)
+          ) {
+            return (v as { result?: unknown }).result ?? null;
           }
           return v ?? null;
         };
@@ -283,8 +283,8 @@ export default function ImportClient({
       }
       const parsedRows = raw.map(parseRow);
       setParsed(parsedRows);
-    } catch (e: any) {
-      toast.error(e.message ?? String(e));
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       setParsing(false);
     }
@@ -362,7 +362,7 @@ export default function ImportClient({
           errors.push(`Linha ${r.rowNumber}: ${saleErr.message}`);
           continue;
         }
-        const saleId = (saleData as any).id as string;
+        const saleId = (saleData as { id: string }).id;
         // pagamentos
         const payInserts = r.payments
           .map((p) => {
@@ -400,8 +400,8 @@ export default function ImportClient({
       setProgress(null);
       setParsed(null);
       setFileName("");
-    } catch (e: any) {
-      toast.error(e.message ?? String(e));
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : String(e));
       setProgress(null);
     } finally {
       setImporting(false);
@@ -655,7 +655,7 @@ export default function ImportClient({
                       <td className="text-xs">
                         {r.errors.length > 0 && (
                           <div className="text-red-700">
-                            {r.errors.map(fmtRowError).join(" · ")}
+                            {r.errors.join(" · ")}
                           </div>
                         )}
                         {r.warnings.length > 0 && (

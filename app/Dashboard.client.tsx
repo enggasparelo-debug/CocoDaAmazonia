@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { errorMessage } from "@/lib/ui";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { brl, fmtDate, fmtPct, pctChange } from "@/lib/format";
@@ -365,8 +366,8 @@ export default function DashboardClient() {
       setCustomers((custsQ.data as Customer[]) ?? []);
       setSellers((sellersQ.data as Seller[]) ?? []);
       setMethods((methodsQ.data as PaymentMethod[]) ?? []);
-    } catch (e: any) {
-      setError(e.message ?? String(e));
+    } catch (e: unknown) {
+      setError(errorMessage(e));
     } finally {
       setLoading(false);
     }

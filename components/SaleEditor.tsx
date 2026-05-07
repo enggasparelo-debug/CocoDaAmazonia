@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { errorMessage } from "@/lib/ui";
 import { createClient } from "@/lib/supabase/client";
 import { brl, fmtDate } from "@/lib/format";
 import { isoToLocal, nowLocalIso } from "@/lib/datetime";
@@ -93,27 +94,26 @@ export default function SaleEditor({
       });
   }, [supabase]);
 
-  async function loadPayments() {
+  const loadPayments = useCallback(async () => {
     const { data } = await supabase
       .from("sale_payments")
       .select("*")
       .eq("sale_id", sale.id)
       .order("paid_at", { ascending: false });
     setPayments((data as SalePayment[]) ?? []);
-  }
-  async function loadReturns() {
+  }, [sale.id, supabase]);
+  const loadReturns = useCallback(async () => {
     const { data } = await supabase
       .from("sale_returns")
       .select("*")
       .eq("sale_id", sale.id)
       .order("returned_at", { ascending: false });
     setReturns((data as SaleReturn[]) ?? []);
-  }
+  }, [sale.id, supabase]);
   useEffect(() => {
     loadPayments();
     loadReturns();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sale.id]);
+  }, [loadPayments, loadReturns]);
 
   async function addPayment() {
     setPayErr(null);
@@ -247,8 +247,8 @@ export default function SaleEditor({
       await supabase.rpc("refresh_sale_status", { p_sale_id: sale.id });
       toast.success("Venda atualizada.");
       onSaved();
-    } catch (e: any) {
-      toast.error(e.message ?? String(e));
+    } catch (e: unknown) {
+      toast.error(errorMessage(e));
     } finally {
       setSaving(false);
     }
@@ -273,8 +273,8 @@ export default function SaleEditor({
       await supabase.rpc("refresh_sale_status", { p_sale_id: sale.id });
       toast.success("Venda cancelada.");
       onSaved();
-    } catch (e: any) {
-      toast.error(e.message ?? String(e));
+    } catch (e: unknown) {
+      toast.error(errorMessage(e));
     } finally {
       setSaving(false);
       setConfirmCancel(false);
@@ -292,8 +292,8 @@ export default function SaleEditor({
       await supabase.rpc("refresh_sale_status", { p_sale_id: sale.id });
       toast.success("Cancelamento revertido.");
       onSaved();
-    } catch (e: any) {
-      toast.error(e.message ?? String(e));
+    } catch (e: unknown) {
+      toast.error(errorMessage(e));
     } finally {
       setSaving(false);
     }

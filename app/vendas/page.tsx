@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { errorMessage } from "@/lib/ui";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { brl, fmtBrNumber, parseBrNumber } from "@/lib/format";
@@ -108,7 +109,10 @@ export default function VendasPage() {
       .eq("customer_id", customerId)
       .maybeSingle()
       .then(({ data }) => {
-        if (data) setCustomerBalance(data as any);
+        if (data)
+          setCustomerBalance(
+            data as { open_balance: number; credit_limit: number | null }
+          );
       });
   }, [customerId, supabase]);
 
@@ -150,8 +154,8 @@ export default function VendasPage() {
       setOpenSaleId(data.id);
       setOpenSaleTotal(Number(data.total));
       setOpenSaleHasCustomer(!!data.customer_id);
-    } catch (e: any) {
-      toast.error(e.message ?? String(e));
+    } catch (e: unknown) {
+      toast.error(errorMessage(e));
     } finally {
       setSavingSale(false);
     }
@@ -178,13 +182,13 @@ export default function VendasPage() {
       if (error) throw error;
       toast.success(`Venda fiada de ${brl(total)} lançada.`);
       reset();
-    } catch (e: any) {
+    } catch (e: unknown) {
       try {
         await enqueueSale(payload);
         toast.warn(`Falhou online — venda enfileirada (${brl(total)}).`);
         reset();
       } catch {
-        toast.error(e.message ?? String(e));
+        toast.error(errorMessage(e));
       }
     } finally {
       setSavingSale(false);
