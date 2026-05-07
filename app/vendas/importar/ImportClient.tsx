@@ -12,10 +12,15 @@ import {
   findMethodId,
   isEmptyRow,
   parseRow,
+  suggestCustomerMatches,
   summarize,
   type ImportRawRow,
   type ParsedRow,
 } from "@/lib/salesImport";
+
+type CustomerResolution =
+  | { mode: "create" }
+  | { mode: "existing"; existingId: string };
 
 // Carrega exceljs só quando precisar (admin abrindo a página).
 async function loadExcel() {
@@ -42,6 +47,9 @@ export default function ImportClient({
   const [autoCreateCustomers, setAutoCreateCustomers] = useState(true);
 
   const [parsed, setParsed] = useState<ParsedRow[] | null>(null);
+  const [resolutions, setResolutions] = useState<
+    Record<string, CustomerResolution>
+  >({});
   const [parsing, setParsing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [fileName, setFileName] = useState<string>("");
@@ -115,6 +123,48 @@ export default function ImportClient({
     }
     return Array.from(set).sort();
   }, [parsed, customers]);
+
+  // Sugestões (top match) por nome faltante.
+  const suggestions = useMemo(() => {
+    const out: Record<
+      string,
+      { id: string; name: string; score: number }[]
+    > = {};
+    for (const n of missingCustomerNames) {
+      out[n] = suggestCustomerMatches(n, customers, 5);
+    }
+    return out;
+  }, [missingCustomerNames, customers]);
+
+  // Sincroniza state `resolutions` com a lista atual de nomes faltantes.
+  // Default: "create" (mantém o comportamento histórico).
+  useEffect(() => {
+    setResolutions((prev) => {
+      const next: Record<string, CustomerResolution> = {};
+      for (const n of missingCustomerNames) {
+        next[n] = prev[n] ?? { mode: "create" };
+      }
+      return next;
+    });
+  }, [missingCustomerNames]);
+
+  const namesToCreate = useMemo(
+    () =>
+      missingCustomerNames.filter(
+        (n) => (resolutions[n]?.mode ?? "create") === "create"
+      ),
+    [missingCustomerNames, resolutions]
+  );
+  const unresolvedNames = useMemo(
+    () =>
+      missingCustomerNames.filter((n) => {
+        const r = resolutions[n];
+        if (!r) return true;
+        if (r.mode === "existing" && !r.existingId) return true;
+        return false;
+      }),
+    [missingCustomerNames, resolutions]
+  );
 
   // ---------- Download do template ---------------------------
   async function downloadTemplate() {
@@ -304,19 +354,27 @@ export default function ImportClient({
     setImporting(true);
     setProgress("Preparando…");
     try {
-      // 1) Cria clientes faltantes (se ativado).
-      let custMap = new Map<string, string>();
+      // 1) Resolve clientes: reconcilia os escolhidos manualmente +
+      // cria os que ficaram como "criar novo".
+      const custMap = new Map<string, string>();
       for (const c of customers)
         custMap.set(c.name.trim().toLowerCase(), c.id);
 
-      if (autoCreateCustomers && missingCustomerNames.length > 0) {
-        setProgress(
-          `Criando ${missingCustomerNames.length} cliente(s)…`
-        );
-        const inserts = missingCustomerNames.map((name) => ({
-          name,
-          active: true,
-        }));
+      // Mapeia nomes resolvidos pra um existing escolhido pelo usuário.
+      for (const name of missingCustomerNames) {
+        const r = resolutions[name];
+        if (r?.mode === "existing" && r.existingId) {
+          custMap.set(name.trim().toLowerCase(), r.existingId);
+        }
+      }
+
+      const toCreate = autoCreateCustomers
+        ? namesToCreate
+        : namesToCreate.filter(() => false);
+
+      if (toCreate.length > 0) {
+        setProgress(`Criando ${toCreate.length} cliente(s)…`);
+        const inserts = toCreate.map((name) => ({ name, active: true }));
         const { data, error } = await supabase
           .from("customers")
           .insert(inserts)
@@ -573,35 +631,187 @@ export default function ImportClient({
               <Stat label="Cartão" value={brl(summary.byMethod.CARTAO)} />
               <Stat label="Fiado" value={brl(summary.fiado)} amber />
             </div>
-            {missingCustomerNames.length > 0 && (
-              <div
-                className={`mt-3 text-sm rounded-xl p-3 border ${
-                  autoCreateCustomers
-                    ? "bg-amber-50 border-amber-200 text-amber-900"
-                    : "bg-red-50 border-red-200 text-red-900"
-                }`}
-              >
-                {autoCreateCustomers ? (
-                  <>
-                    Vou criar {missingCustomerNames.length} cliente(s) novos:{" "}
-                    {missingCustomerNames.slice(0, 6).join(", ")}
-                    {missingCustomerNames.length > 6
-                      ? ` e mais ${missingCustomerNames.length - 6}…`
-                      : ""}
-                  </>
-                ) : (
-                  <>
-                    {missingCustomerNames.length} cliente(s) não existem e o
-                    auto-criar está desligado:{" "}
-                    {missingCustomerNames.slice(0, 6).join(", ")}
-                    {missingCustomerNames.length > 6
-                      ? ` e mais ${missingCustomerNames.length - 6}…`
-                      : ""}
-                  </>
-                )}
-              </div>
-            )}
           </div>
+
+          {missingCustomerNames.length > 0 && (
+            <div className="card space-y-3">
+              <div className="flex items-start justify-between flex-wrap gap-2">
+                <div>
+                  <h2 className="font-bold text-coco-900">
+                    Clientes não encontrados ({missingCustomerNames.length})
+                  </h2>
+                  <p className="text-xs text-coco-600">
+                    Pra cada nome, escolha criar um cliente novo ou
+                    vincular a um já existente. Sugestões automáticas
+                    quando achamos algo parecido.
+                  </p>
+                </div>
+                <div className="flex gap-2 text-xs">
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => {
+                      const next: Record<string, CustomerResolution> = {};
+                      for (const n of missingCustomerNames)
+                        next[n] = { mode: "create" };
+                      setResolutions(next);
+                    }}
+                  >
+                    Marcar todos como "criar"
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => {
+                      const next: Record<string, CustomerResolution> = {
+                        ...resolutions,
+                      };
+                      for (const n of missingCustomerNames) {
+                        const top = suggestions[n]?.[0];
+                        if (top)
+                          next[n] = { mode: "existing", existingId: top.id };
+                      }
+                      setResolutions(next);
+                    }}
+                  >
+                    Aceitar sugestões
+                  </button>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Nome na planilha</th>
+                      <th>Ação</th>
+                      <th>Cliente existente</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {missingCustomerNames.map((name) => {
+                      const r = resolutions[name] ?? { mode: "create" };
+                      const sugg = suggestions[name] ?? [];
+                      return (
+                        <tr key={name}>
+                          <td className="font-medium text-coco-900">
+                            {name}
+                            {sugg.length > 0 && r.mode === "create" && (
+                              <div className="text-xs text-coco-600 mt-0.5">
+                                Parecido com:{" "}
+                                <button
+                                  type="button"
+                                  className="underline text-coco-700"
+                                  onClick={() =>
+                                    setResolutions((p) => ({
+                                      ...p,
+                                      [name]: {
+                                        mode: "existing",
+                                        existingId: sugg[0].id,
+                                      },
+                                    }))
+                                  }
+                                >
+                                  {sugg[0].name}
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                          <td className="whitespace-nowrap">
+                            <label className="inline-flex items-center gap-1 text-sm mr-3">
+                              <input
+                                type="radio"
+                                name={`res-${name}`}
+                                checked={r.mode === "create"}
+                                onChange={() =>
+                                  setResolutions((p) => ({
+                                    ...p,
+                                    [name]: { mode: "create" },
+                                  }))
+                                }
+                              />
+                              Criar novo
+                            </label>
+                            <label className="inline-flex items-center gap-1 text-sm">
+                              <input
+                                type="radio"
+                                name={`res-${name}`}
+                                checked={r.mode === "existing"}
+                                onChange={() =>
+                                  setResolutions((p) => ({
+                                    ...p,
+                                    [name]: {
+                                      mode: "existing",
+                                      existingId:
+                                        suggestions[name]?.[0]?.id ?? "",
+                                    },
+                                  }))
+                                }
+                              />
+                              Vincular a existente
+                            </label>
+                          </td>
+                          <td>
+                            <select
+                              className="input"
+                              disabled={r.mode !== "existing"}
+                              value={
+                                r.mode === "existing" ? r.existingId : ""
+                              }
+                              onChange={(e) =>
+                                setResolutions((p) => ({
+                                  ...p,
+                                  [name]: {
+                                    mode: "existing",
+                                    existingId: e.target.value,
+                                  },
+                                }))
+                              }
+                            >
+                              <option value="">
+                                — selecione um cliente —
+                              </option>
+                              {sugg.length > 0 && (
+                                <optgroup label="Sugestões">
+                                  {sugg.map((s) => (
+                                    <option key={s.id} value={s.id}>
+                                      {s.name}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              )}
+                              <optgroup label="Todos">
+                                {customers.map((c) => (
+                                  <option key={c.id} value={c.id}>
+                                    {c.name}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            </select>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {!autoCreateCustomers && namesToCreate.length > 0 && (
+                <div className="text-xs rounded-xl p-2 bg-red-50 border border-red-200 text-red-800">
+                  {namesToCreate.length} nome(s) marcado(s) como "criar
+                  novo", mas o auto-criar está desligado. Ative no card
+                  Configuração ou vincule a um cliente existente.
+                </div>
+              )}
+              {unresolvedNames.length > 0 && (
+                <div className="text-xs rounded-xl p-2 bg-amber-50 border border-amber-200 text-amber-900">
+                  {unresolvedNames.length} cliente(s) marcado(s) como
+                  "vincular" sem escolha. Selecione um cliente em cada
+                  linha pendente.
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="card overflow-x-auto">
             <h2 className="font-bold text-coco-900 mb-3">
@@ -700,7 +910,9 @@ export default function ImportClient({
                   hasErrors ||
                   !sellerId ||
                   missingMethods.length > 0 ||
-                  summary.rows === 0
+                  summary.rows === 0 ||
+                  unresolvedNames.length > 0 ||
+                  (!autoCreateCustomers && namesToCreate.length > 0)
                 }
                 className="btn-primary"
               >

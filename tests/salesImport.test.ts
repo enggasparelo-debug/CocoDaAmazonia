@@ -4,6 +4,7 @@ import {
   findMethodId,
   isEmptyRow,
   parseRow,
+  suggestCustomerMatches,
   summarize,
   type ImportRawRow,
 } from "@/lib/salesImport";
@@ -227,5 +228,42 @@ describe("summarize", () => {
     expect(s.byMethod.DINHEIRO).toBe(210);
     expect(s.byMethod.CARTAO).toBe(0);
     expect(s.fiado).toBe(450);
+  });
+});
+
+describe("suggestCustomerMatches", () => {
+  const customers = [
+    { id: "1", name: "MINEIRO" },
+    { id: "2", name: "CABEÇA BRANCA" },
+    { id: "3", name: "PIAUÍ" },
+    { id: "4", name: "STEPHANO" },
+    { id: "5", name: "STEFANO" },
+  ];
+
+  it("retorna o match exato com score 0", () => {
+    const r = suggestCustomerMatches("mineiro", customers);
+    expect(r[0].id).toBe("1");
+    expect(r[0].score).toBe(0);
+  });
+
+  it("ignora acentos", () => {
+    const r = suggestCustomerMatches("PIAUI", customers);
+    expect(r[0].id).toBe("3");
+  });
+
+  it("acha o mais parecido por Levenshtein", () => {
+    const r = suggestCustomerMatches("STEFANO", customers);
+    expect(r[0].id).toBe("5");
+    expect(r[1]?.id).toBe("4");
+  });
+
+  it("retorna vazio quando nada se aproxima", () => {
+    const r = suggestCustomerMatches("ZZZZZZZ", customers);
+    expect(r).toEqual([]);
+  });
+
+  it("respeita limite", () => {
+    const r = suggestCustomerMatches("ST", customers, 1);
+    expect(r.length).toBeLessThanOrEqual(1);
   });
 });

@@ -212,6 +212,57 @@ function deburr(s: string): string {
   return s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 }
 
+// Levenshtein simples (suficiente pra nomes curtos de cliente).
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const prev = new Array(b.length + 1);
+  const curr = new Array(b.length + 1);
+  for (let j = 0; j <= b.length; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+    }
+    for (let j = 0; j <= b.length; j++) prev[j] = curr[j];
+  }
+  return prev[b.length];
+}
+
+// Sugere clientes mais parecidos com `name`. Ranking: substring exata >
+// prefixo > Levenshtein normalizado. Retorna até `limit` itens.
+export function suggestCustomerMatches(
+  name: string,
+  customers: { id: string; name: string }[],
+  limit = 5
+): { id: string; name: string; score: number }[] {
+  const target = deburr(name).trim();
+  if (!target) return [];
+  const scored = customers
+    .map((c) => {
+      const cname = deburr(c.name).trim();
+      if (!cname) return null;
+      let score: number;
+      if (cname === target) score = 0;
+      else if (cname.startsWith(target) || target.startsWith(cname))
+        score = 0.1;
+      else if (cname.includes(target) || target.includes(cname)) score = 0.2;
+      else {
+        const dist = levenshtein(cname, target);
+        const max = Math.max(cname.length, target.length);
+        score = dist / max;
+      }
+      return { id: c.id, name: c.name, score };
+    })
+    .filter((x): x is { id: string; name: string; score: number } => !!x)
+    .filter((x) => x.score <= 0.5)
+    .sort((a, b) => a.score - b.score)
+    .slice(0, limit);
+  return scored;
+}
+
 export function findMethodId(
   key: "PIX" | "DINHEIRO" | "CARTAO",
   methods: { id: string; name: string; is_credit?: boolean }[]
