@@ -1,9 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import type { ProductSettings, Tenant } from "@/lib/types";
-import { brl } from "@/lib/format";
+import type {
+  ProductPriceHistory,
+  ProductSettings,
+  Tenant,
+} from "@/lib/types";
+import { brl, fmtDate } from "@/lib/format";
 import { useTenant } from "@/lib/useTenant";
 import { useToast } from "@/components/Toast";
 import PushOptIn from "@/components/PushOptIn";
@@ -16,22 +21,34 @@ export default function ConfiguracoesPage() {
   const [productName, setProductName] = useState("");
   const [price, setPrice] = useState(0);
   const [minStock, setMinStock] = useState<number>(0);
+  const [priceHistory, setPriceHistory] = useState<ProductPriceHistory[]>(
+    []
+  );
 
   const [biz, setBiz] = useState<Partial<Tenant>>({});
   const [saving, setSaving] = useState(false);
 
   async function load() {
-    const { data } = await supabase
-      .from("product_settings")
-      .select("*")
-      .limit(1)
-      .maybeSingle();
+    const [psQ, hQ] = await Promise.all([
+      supabase
+        .from("product_settings")
+        .select("*")
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from("product_price_history")
+        .select("*")
+        .order("started_at", { ascending: false })
+        .limit(10),
+    ]);
+    const data = psQ.data;
     if (data) {
       setSettings(data as ProductSettings);
       setProductName(data.name);
       setPrice(Number(data.unit_price));
       setMinStock(Number(data.min_stock ?? 0));
     }
+    setPriceHistory((hQ.data as ProductPriceHistory[]) ?? []);
   }
   useEffect(() => {
     load();
@@ -217,6 +234,37 @@ export default function ConfiguracoesPage() {
               </p>
             </div>
           </div>
+          {priceHistory.length > 1 && (
+            <details className="border-t border-coco-100 pt-3">
+              <summary className="cursor-pointer text-sm text-coco-700 hover:text-coco-900">
+                Histórico de preço ({priceHistory.length} mudança
+                {priceHistory.length === 1 ? "" : "s"})
+              </summary>
+              <table className="table mt-3 text-xs">
+                <thead>
+                  <tr>
+                    <th>Quando</th>
+                    <th className="text-right">Preço</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {priceHistory.map((h) => (
+                    <tr key={h.id}>
+                      <td>{fmtDate(h.started_at)}</td>
+                      <td className="text-right font-semibold">
+                        {brl(Number(h.unit_price))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="text-xs text-coco-600 mt-2">
+                Vendas existentes mantêm o preço aplicado em
+                <code className="mx-1">sales.unit_price</code>; este
+                histórico é só pra rastrear quando você mudou o padrão.
+              </p>
+            </details>
+          )}
           <button
             onClick={saveProduct}
             disabled={saving}
@@ -224,6 +272,27 @@ export default function ConfiguracoesPage() {
           >
             {saving ? "…" : "Salvar produto"}
           </button>
+        </div>
+      </div>
+
+      <div className="card">
+        <h2 className="font-bold text-coco-900 mb-2">Cadastros auxiliares</h2>
+        <div className="flex flex-wrap gap-2">
+          <Link href="/configuracoes/veiculos" className="btn-secondary">
+            🚚 Veículos
+          </Link>
+          <Link href="/configuracoes/rotas" className="btn-secondary">
+            🗺️ Rotas
+          </Link>
+          <Link href="/configuracoes/vendedores" className="btn-secondary">
+            🧑‍💼 Vendedores
+          </Link>
+          <Link href="/configuracoes/operadores" className="btn-secondary">
+            👥 Operadores e admins
+          </Link>
+          <Link href="/configuracoes/categorias" className="btn-secondary">
+            🏷️ Categorias de despesa
+          </Link>
         </div>
       </div>
 

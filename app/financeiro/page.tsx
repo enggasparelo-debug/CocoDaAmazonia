@@ -12,6 +12,7 @@ type FlowRow = {
   payment_method_id: string;
   sale_id: string;
   notes: string | null;
+  sale: { code: number } | null;
 };
 
 function isoStartOfDay(date: string) {
@@ -45,7 +46,7 @@ export default function FinanceiroPage() {
       supabase.from("payment_methods").select("*"),
       supabase
         .from("sale_payments")
-        .select("*")
+        .select("*, sale:sales(code)")
         .gte("paid_at", isoStartOfDay(from))
         .lte("paid_at", isoEndOfDay(to))
         .order("paid_at", { ascending: false }),
@@ -79,11 +80,19 @@ export default function FinanceiroPage() {
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-3xl font-bold text-coco-900">Financeiro</h1>
-        <p className="text-coco-600">
-          Fluxo de recebimentos por forma de pagamento.
-        </p>
+      <header className="flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-3xl font-bold text-coco-900">Financeiro</h1>
+          <p className="text-coco-600">
+            Fluxo de recebimentos por forma de pagamento.
+          </p>
+        </div>
+        <a
+          href="/financeiro/dre"
+          className="btn-secondary"
+        >
+          📊 Ver DRE
+        </a>
       </header>
 
       <div className="card flex flex-wrap items-end gap-3">
@@ -151,7 +160,7 @@ export default function FinanceiroPage() {
                   <td>{fmtDate(r.paid_at)}</td>
                   <td>{methodsById[r.payment_method_id]?.name ?? "—"}</td>
                   <td className="text-xs text-coco-600">
-                    {r.sale_id.slice(0, 8)}
+                    {r.sale ? `#${r.sale.code}` : "—"}
                   </td>
                   <td className="text-right font-semibold">
                     {brl(Number(r.amount))}

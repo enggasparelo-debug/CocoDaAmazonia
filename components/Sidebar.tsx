@@ -6,19 +6,30 @@ import { createClient } from "@/lib/supabase/client";
 import { useEffect, useState } from "react";
 import { useTenant } from "@/lib/useTenant";
 
-const items = [
-  { href: "/", label: "Painel", icon: "📊" },
-  { href: "/vendas", label: "Venda Rápida", icon: "🥥" },
-  { href: "/clientes", label: "Clientes", icon: "👥" },
-  { href: "/formas-pagamento", label: "Formas de Pagamento", icon: "💳" },
-  { href: "/receber", label: "Contas a Receber", icon: "📒" },
-  { href: "/caixa", label: "Caixa", icon: "💵" },
-  { href: "/despesas", label: "Despesas", icon: "💸" },
-  { href: "/estoque", label: "Estoque", icon: "📦" },
-  { href: "/financeiro", label: "Financeiro", icon: "💰" },
-  { href: "/relatorios", label: "Relatórios", icon: "📈" },
-  { href: "/configuracoes", label: "Configurações", icon: "⚙️" },
-  { href: "/auditoria", label: "Auditoria", icon: "🔍", adminOnly: true },
+type Role = "admin" | "operador";
+type NavItem = {
+  href: string;
+  label: string;
+  icon: string;
+  roles: Role[];
+};
+
+const items: NavItem[] = [
+  { href: "/", label: "Painel", icon: "📊", roles: ["admin"] },
+  { href: "/carga", label: "Minha Carga", icon: "🚚", roles: ["operador", "admin"] },
+  { href: "/vendas", label: "Venda Rápida", icon: "🥥", roles: ["admin"] },
+  { href: "/cargas", label: "Cargas", icon: "📋", roles: ["admin"] },
+  { href: "/clientes", label: "Clientes", icon: "👥", roles: ["admin", "operador"] },
+  { href: "/formas-pagamento", label: "Formas de Pagamento", icon: "💳", roles: ["admin"] },
+  { href: "/receber", label: "Contas a Receber", icon: "📒", roles: ["admin"] },
+  { href: "/caixa", label: "Caixa", icon: "💵", roles: ["admin"] },
+  { href: "/despesas", label: "Despesas", icon: "💸", roles: ["admin"] },
+  { href: "/estoque", label: "Estoque", icon: "📦", roles: ["admin"] },
+  { href: "/financeiro", label: "Financeiro", icon: "💰", roles: ["admin"] },
+  { href: "/operadores", label: "Operadores", icon: "🧑‍💼", roles: ["admin"] },
+  { href: "/relatorios", label: "Relatórios", icon: "📈", roles: ["admin"] },
+  { href: "/configuracoes", label: "Configurações", icon: "⚙️", roles: ["admin"] },
+  { href: "/auditoria", label: "Auditoria", icon: "🔍", roles: ["admin"] },
 ];
 
 export default function Sidebar() {
@@ -26,7 +37,7 @@ export default function Sidebar() {
   const router = useRouter();
   const supabase = createClient();
   const [email, setEmail] = useState<string | null>(null);
-  const { tenant, isAdmin } = useTenant();
+  const { tenant, isAdmin, membership } = useTenant();
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -40,7 +51,8 @@ export default function Sidebar() {
     router.refresh();
   }
 
-  const visible = items.filter((i) => !i.adminOnly || isAdmin);
+  const role: Role = (membership?.role ?? "operador") as Role;
+  const visible = items.filter((i) => i.roles.includes(role));
 
   return (
     <aside className="w-60 bg-coco-800 text-coco-50 hidden md:flex flex-col py-6 px-4 sticky top-0 h-screen">
@@ -74,7 +86,11 @@ export default function Sidebar() {
         {email && (
           <div className="text-coco-200 text-xs truncate mb-1" title={email}>
             👤 {email}
-            {isAdmin && <span className="ml-1 text-coco-300">(admin)</span>}
+            {isAdmin ? (
+              <span className="ml-1 text-coco-300">(admin)</span>
+            ) : (
+              <span className="ml-1 text-coco-300">(operador)</span>
+            )}
           </div>
         )}
         <button
@@ -83,7 +99,7 @@ export default function Sidebar() {
         >
           ↩ Sair
         </button>
-        <div className="text-xs text-coco-300 mt-3">v0.3 · Supabase + Vercel</div>
+        <div className="text-xs text-coco-300 mt-3">v0.4 · Supabase + Vercel</div>
       </div>
     </aside>
   );

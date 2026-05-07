@@ -13,6 +13,8 @@ import type {
 } from "@/lib/types";
 import StatusBadge from "@/components/StatusBadge";
 import ConfirmModal from "@/components/ConfirmModal";
+import SaleEditor from "@/components/SaleEditor";
+import PaymentEditor from "@/components/PaymentEditor";
 import { useToast } from "@/components/Toast";
 import { useTenant } from "@/lib/useTenant";
 
@@ -27,12 +29,17 @@ export default function ClienteDetalhePage() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [payments, setPayments] = useState<SalePayment[]>([]);
   const [methods, setMethods] = useState<Record<string, PaymentMethod>>({});
+  const [methodList, setMethodList] = useState<PaymentMethod[]>([]);
+  const [allCustomers, setAllCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [confirmDelete, setConfirmDelete] = useState<SalePayment | null>(null);
+  const [editingSale, setEditingSale] = useState<Sale | null>(null);
+  const [editingPayment, setEditingPayment] = useState<SalePayment | null>(null);
+  const [confirmDeleteSale, setConfirmDeleteSale] = useState<Sale | null>(null);
 
   async function load() {
     setLoading(true);
-    const [c, s, m] = await Promise.all([
+    const [c, s, m, ac] = await Promise.all([
       supabase.from("customers").select("*").eq("id", id).single(),
       supabase
         .from("sales")
@@ -40,13 +47,17 @@ export default function ClienteDetalhePage() {
         .eq("customer_id", id)
         .order("created_at", { ascending: false }),
       supabase.from("payment_methods").select("*"),
+      supabase.from("customers").select("*").order("name"),
     ]);
     setCustomer((c.data as Customer) ?? null);
     setSales((s.data as Sale[]) ?? []);
+    setAllCustomers((ac.data as Customer[]) ?? []);
 
     const map: Record<string, PaymentMethod> = {};
-    (m.data as PaymentMethod[] | null)?.forEach((x) => (map[x.id] = x));
+    const list = (m.data as PaymentMethod[] | null) ?? [];
+    list.forEach((x) => (map[x.id] = x));
     setMethods(map);
+    setMethodList(list.filter((x) => x.active && !x.is_credit));
 
     if (s.data && s.data.length > 0) {
       const ids = s.data.map((x) => x.id);
@@ -76,6 +87,17 @@ export default function ClienteDetalhePage() {
       return;
     }
     toast.success("Pagamento removido.");
+    load();
+  }
+
+  async function deleteSale(s: Sale) {
+    const { error } = await supabase.from("sales").delete().eq("id", s.id);
+    setConfirmDeleteSale(null);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Venda apagada.");
     load();
   }
 
@@ -132,7 +154,7 @@ export default function ClienteDetalhePage() {
             <a
               href={wa}
               target="_blank"
-              rel="noreferrer"
+              rel="noopener noreferrer"
               className="btn-secondary"
             >
               📲 WhatsApp do saldo
@@ -198,6 +220,7 @@ export default function ClienteDetalhePage() {
                         <Link
                           href={`/recibo/${sale.id}`}
                           target="_blank"
+                          rel="noopener noreferrer"
                           className="text-coco-700 underline"
                         >
                           venda de {fmtDate(sale.created_at)}
@@ -207,15 +230,24 @@ export default function ClienteDetalhePage() {
                       )}
                     </td>
                     <td className="text-xs text-coco-600">{p.notes ?? ""}</td>
-                    <td className="text-right">
+                    <td className="text-right whitespace-nowrap">
                       {isAdmin && (
-                        <button
-                          onClick={() => setConfirmDelete(p)}
-                          className="btn-ghost text-xs text-red-700"
-                          title="Remover pagamento"
-                        >
-                          🗑
-                        </button>
+                        <>
+                          <button
+                            onClick={() => setEditingPayment(p)}
+                            className="btn-ghost text-xs"
+                            title="Editar pagamento"
+                          >
+                            ✏️
+                          </button>
+                          <button
+                            onClick={() => setConfirmDelete(p)}
+                            className="btn-ghost text-xs text-red-700"
+                            title="Remover pagamento"
+                          >
+                            🗑
+                          </button>
+                        </>
                       )}
                     </td>
                   </tr>
@@ -273,14 +305,35 @@ export default function ClienteDetalhePage() {
                         </div>
                       )}
                     </td>
-                    <td className="text-right">
+                    <td className="text-right whitespace-nowrap">
                       <Link
                         href={`/recibo/${s.id}`}
                         target="_blank"
+                        rel="noopener noreferrer"
                         className="btn-ghost text-xs"
+                        title="Recibo"
+                        aria-label="Abrir recibo"
                       >
                         🧾
                       </Link>
+                      {isAdmin && (
+                        <>
+                          <button
+                            onClick={() => setEditingSale(s)}
+                            className="btn-ghost text-xs"
+                            title="Editar venda"
+                          >
+                            ✏️
+                          </button>
+                          <button
+                            onClick={() => setConfirmDeleteSale(s)}
+                            className="btn-ghost text-xs text-red-700"
+                            title="Apagar venda definitivamente"
+                          >
+                            🗑
+                          </button>
+                        </>
+                      )}
                     </td>
                   </tr>
                 );
@@ -306,6 +359,54 @@ export default function ClienteDetalhePage() {
           }
           onCancel={() => setConfirmDelete(null)}
           onConfirm={() => deletePayment(confirmDelete)}
+        />
+      )}
+
+      {editingSale && (
+        <SaleEditor
+          sale={editingSale}
+          customers={allCustomers}
+          onClose={() => setEditingSale(null)}
+          onSaved={() => {
+            setEditingSale(null);
+            load();
+          }}
+        />
+      )}
+
+      {editingPayment && (
+        <PaymentEditor
+          payment={editingPayment}
+          methods={methodList}
+          onClose={() => setEditingPayment(null)}
+          onSaved={() => {
+            setEditingPayment(null);
+            load();
+          }}
+        />
+      )}
+
+      {confirmDeleteSale && (
+        <ConfirmModal
+          title="Apagar esta venda definitivamente?"
+          danger
+          confirmText="Apagar tudo"
+          message={
+            <>
+              Vai apagar a venda de{" "}
+              <strong>{brl(Number(confirmDeleteSale.total))}</strong> de{" "}
+              {fmtDate(confirmDeleteSale.created_at)}{" "}
+              <strong>e todos os pagamentos relacionados</strong>. Não dá pra
+              desfazer.
+              <br />
+              <br />
+              Se for só corrigir, prefira <strong>Editar</strong> ou{" "}
+              <strong>Cancelar</strong> a venda — assim o histórico fica
+              preservado.
+            </>
+          }
+          onCancel={() => setConfirmDeleteSale(null)}
+          onConfirm={() => deleteSale(confirmDeleteSale)}
         />
       )}
     </div>

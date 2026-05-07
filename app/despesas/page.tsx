@@ -1,9 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { brl, fmtDate } from "@/lib/format";
-import type { Expense, PaymentMethod } from "@/lib/types";
+import { isoToLocal, nowLocalIso } from "@/lib/datetime";
+import { downloadCsv, downloadXlsx, rowsToCsv } from "@/lib/export";
+import type { Expense, ExpenseCategory, PaymentMethod } from "@/lib/types";
 import { useToast } from "@/components/Toast";
 
 const empty: Partial<Expense> = {
@@ -14,22 +17,24 @@ const empty: Partial<Expense> = {
   payment_method_id: null,
 };
 
-const CATEGORIES = [
-  "Fornecedor",
-  "Combustível",
-  "Gelo",
-  "Embalagem",
-  "Salário",
-  "Aluguel",
-  "Outros",
-];
-
 export default function DespesasPage() {
   const supabase = createClient();
   const toast = useToast();
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
+  const [categories, setCategories] = useState<ExpenseCategory[]>([]);
   const [editing, setEditing] = useState<Partial<Expense> | null>(null);
+  const [paidAtLocal, setPaidAtLocal] = useState<string>(nowLocalIso());
+
+  function openNew() {
+    setEditing({ ...empty });
+    setPaidAtLocal(nowLocalIso());
+  }
+
+  function openEdit(e: Expense) {
+    setEditing(e);
+    setPaidAtLocal(isoToLocal(e.paid_at));
+  }
 
   const [from, setFrom] = useState(() => {
     const d = new Date();
@@ -39,7 +44,7 @@ export default function DespesasPage() {
   const [to, setTo] = useState(() => new Date().toISOString().slice(0, 10));
 
   async function load() {
-    const [e, m] = await Promise.all([
+    const [e, m, c] = await Promise.all([
       supabase
         .from("expenses")
         .select("*")
@@ -52,9 +57,15 @@ export default function DespesasPage() {
         .eq("active", true)
         .eq("is_credit", false)
         .order("name"),
+      supabase
+        .from("expense_categories")
+        .select("*")
+        .order("sort_order")
+        .order("name"),
     ]);
     setExpenses((e.data as Expense[]) ?? []);
     setMethods((m.data as PaymentMethod[]) ?? []);
+    setCategories((c.data as ExpenseCategory[]) ?? []);
   }
 
   useEffect(() => {
@@ -80,6 +91,10 @@ export default function DespesasPage() {
       return toast.error("Descrição obrigatória.");
     if (!editing.amount || editing.amount <= 0)
       return toast.error("Valor inválido.");
+    if (!paidAtLocal) return toast.error("Informe a data da despesa.");
+    const paidAtIso = new Date(paidAtLocal).toISOString();
+    if (new Date(paidAtIso).getTime() > Date.now() + 60_000)
+      return toast.error("A data da despesa não pode ser no futuro.");
 
     const payload = {
       description: editing.description!.trim(),
@@ -87,7 +102,7 @@ export default function DespesasPage() {
       amount: editing.amount,
       payment_method_id: editing.payment_method_id || null,
       notes: editing.notes || null,
-      paid_at: editing.paid_at ?? new Date().toISOString(),
+      paid_at: paidAtIso,
     };
 
     const op = editing.id
@@ -116,9 +131,53 @@ export default function DespesasPage() {
             Custos do negócio para apurar o lucro real.
           </p>
         </div>
-        <button onClick={() => setEditing({ ...empty })} className="btn-primary">
-          + Nova despesa
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => {
+              const rows = expenses.map((e) => ({
+                data: fmtDate(e.paid_at),
+                descricao: e.description,
+                categoria: e.category ?? "",
+                valor: Number(e.amount).toFixed(2),
+                forma:
+                  methods.find((m) => m.id === e.payment_method_id)?.name ??
+                  "",
+                observacao: (e.notes ?? "").replace(/[\n]/g, " "),
+              }));
+              downloadCsv(`despesas_${from}_${to}.csv`, rowsToCsv(rows));
+            }}
+            disabled={expenses.length === 0}
+            className="btn-secondary"
+          >
+            ⬇ CSV
+          </button>
+          <button
+            onClick={async () => {
+              const rows = expenses.map((e) => ({
+                data: fmtDate(e.paid_at),
+                descricao: e.description,
+                categoria: e.category ?? "",
+                valor: Number(e.amount).toFixed(2),
+                forma:
+                  methods.find((m) => m.id === e.payment_method_id)?.name ??
+                  "",
+                observacao: (e.notes ?? "").replace(/[\n]/g, " "),
+              }));
+              await downloadXlsx(
+                `despesas_${from}_${to}.xlsx`,
+                "Despesas",
+                rows
+              );
+            }}
+            disabled={expenses.length === 0}
+            className="btn-secondary"
+          >
+            ⬇ Excel
+          </button>
+          <button onClick={openNew} className="btn-primary">
+            + Nova despesa
+          </button>
+        </div>
       </header>
 
       <div className="card flex flex-wrap items-end gap-3">
@@ -188,7 +247,7 @@ export default function DespesasPage() {
                   </td>
                   <td className="text-right">
                     <button
-                      onClick={() => setEditing(e)}
+                      onClick={() => openEdit(e)}
                       className="btn-ghost text-xs"
                     >
                       ✏️
@@ -250,33 +309,65 @@ export default function DespesasPage() {
                     }
                   >
                     <option value="">—</option>
-                    {CATEGORIES.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
+                    {categories
+                      .filter((c) => c.active)
+                      .map((c) => (
+                        <option key={c.id} value={c.name}>
+                          {c.name}
+                        </option>
+                      ))}
+                    {editing.category &&
+                      !categories.some(
+                        (c) => c.active && c.name === editing.category
+                      ) && (
+                        <option value={editing.category}>
+                          {editing.category} (inativa)
+                        </option>
+                      )}
+                  </select>
+                  {categories.length === 0 && (
+                    <p className="text-xs text-amber-700 mt-1">
+                      Nenhuma categoria cadastrada.{" "}
+                      <Link
+                        href="/configuracoes/categorias"
+                        className="underline"
+                      >
+                        Cadastrar
+                      </Link>
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Data da despesa *</label>
+                  <input
+                    type="datetime-local"
+                    className="input"
+                    value={paidAtLocal}
+                    onChange={(e) => setPaidAtLocal(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="label">Pago em</label>
+                  <select
+                    className="input"
+                    value={editing.payment_method_id ?? ""}
+                    onChange={(e) =>
+                      setEditing({
+                        ...editing,
+                        payment_method_id: e.target.value || null,
+                      })
+                    }
+                  >
+                    <option value="">—</option>
+                    {methods.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
                       </option>
                     ))}
                   </select>
                 </div>
-              </div>
-              <div>
-                <label className="label">Pago em</label>
-                <select
-                  className="input"
-                  value={editing.payment_method_id ?? ""}
-                  onChange={(e) =>
-                    setEditing({
-                      ...editing,
-                      payment_method_id: e.target.value || null,
-                    })
-                  }
-                >
-                  <option value="">—</option>
-                  {methods.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
               </div>
               <div>
                 <label className="label">Observação</label>

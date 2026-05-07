@@ -1,42 +1,36 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { errorMessage } from "@/lib/ui";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { brl } from "@/lib/format";
-import type { Customer, PaymentMethod, ProductSettings } from "@/lib/types";
+import { brl, fmtBrNumber, parseBrNumber } from "@/lib/format";
+import { nowLocalIso } from "@/lib/datetime";
+import type {
+  Customer,
+  PaymentMethod,
+  ProductSettings,
+  Seller,
+} from "@/lib/types";
 import PaymentModal from "@/components/PaymentModal";
 import { useToast } from "@/components/Toast";
 import { enqueueSale } from "@/lib/offlineQueue";
-
-// Aceita "3", "3,5", "3.50" etc. Retorna 0 se inválido.
-function parseBrNumber(s: string): number {
-  if (!s) return 0;
-  const norm = s.replace(/\s/g, "").replace(/\./g, "").replace(",", ".");
-  const n = parseFloat(norm);
-  return isNaN(n) ? 0 : n;
-}
-
-function fmtBrNumber(n: number): string {
-  return n.toFixed(2).replace(".", ",");
-}
-
-function nowLocalIso(): string {
-  const d = new Date();
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 16);
-}
+import { useTenant } from "@/lib/useTenant";
 
 export default function VendasPage() {
   const supabase = createClient();
   const toast = useToast();
+  const { seller: mySeller, isAdmin } = useTenant();
   const [settings, setSettings] = useState<ProductSettings | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
+  const [sellers, setSellers] = useState<Seller[]>([]);
 
   const [quantity, setQuantity] = useState<string>("");
   const [unitPriceStr, setUnitPriceStr] = useState<string>("");
   const [discountStr, setDiscountStr] = useState<string>("0");
   const [customerId, setCustomerId] = useState<string>("");
+  const [sellerId, setSellerId] = useState<string>("");
   const [notes, setNotes] = useState<string>("");
   const [saleDate, setSaleDate] = useState<string>(nowLocalIso());
   const [savingSale, setSavingSale] = useState(false);
@@ -67,7 +61,7 @@ export default function VendasPage() {
   );
 
   async function loadData() {
-    const [s, c, m] = await Promise.all([
+    const [s, c, m, sl] = await Promise.all([
       supabase.from("product_settings").select("*").limit(1).single(),
       supabase
         .from("customers")
@@ -79,6 +73,11 @@ export default function VendasPage() {
         .select("*")
         .eq("active", true)
         .order("name"),
+      supabase
+        .from("sellers")
+        .select("*")
+        .eq("active", true)
+        .order("name"),
     ]);
     if (s.data) {
       setSettings(s.data as ProductSettings);
@@ -87,11 +86,17 @@ export default function VendasPage() {
     }
     setCustomers((c.data as Customer[]) ?? []);
     setMethods((m.data as PaymentMethod[]) ?? []);
+    setSellers((sl.data as Seller[]) ?? []);
   }
 
   useEffect(() => {
     loadData();
   }, []);
+
+  // Pré-seleciona o seller do admin logado, se houver vínculo
+  useEffect(() => {
+    if (mySeller && !sellerId) setSellerId(mySeller.id);
+  }, [mySeller, sellerId]);
 
   useEffect(() => {
     if (!customerId) {
@@ -104,13 +109,17 @@ export default function VendasPage() {
       .eq("customer_id", customerId)
       .maybeSingle()
       .then(({ data }) => {
-        if (data) setCustomerBalance(data as any);
+        if (data)
+          setCustomerBalance(
+            data as { open_balance: number; credit_limit: number | null }
+          );
       });
   }, [customerId, supabase]);
 
   function buildPayload() {
     return {
       customer_id: customerId || null,
+      seller_id: sellerId,
       quantity: qty,
       unit_price: unitPrice,
       discount,
@@ -124,6 +133,7 @@ export default function VendasPage() {
     if (qty <= 0) return "Informe a quantidade.";
     if (unitPrice <= 0) return "Informe o valor unitário.";
     if (discount > subtotal) return "Desconto maior que o subtotal.";
+    if (!sellerId) return "Selecione um vendedor.";
     if (!saleDate) return "Informe a data da venda.";
     if (new Date(saleDate).getTime() > Date.now() + 60_000)
       return "A data da venda não pode ser no futuro.";
@@ -144,8 +154,8 @@ export default function VendasPage() {
       setOpenSaleId(data.id);
       setOpenSaleTotal(Number(data.total));
       setOpenSaleHasCustomer(!!data.customer_id);
-    } catch (e: any) {
-      toast.error(e.message ?? String(e));
+    } catch (e: unknown) {
+      toast.error(errorMessage(e));
     } finally {
       setSavingSale(false);
     }
@@ -172,13 +182,13 @@ export default function VendasPage() {
       if (error) throw error;
       toast.success(`Venda fiada de ${brl(total)} lançada.`);
       reset();
-    } catch (e: any) {
+    } catch (e: unknown) {
       try {
         await enqueueSale(payload);
         toast.warn(`Falhou online — venda enfileirada (${brl(total)}).`);
         reset();
       } catch {
-        toast.error(e.message ?? String(e));
+        toast.error(errorMessage(e));
       }
     } finally {
       setSavingSale(false);
@@ -194,6 +204,7 @@ export default function VendasPage() {
     setOpenSaleTotal(0);
     setOpenSaleHasCustomer(false);
     setSaleDate(nowLocalIso());
+    setSellerId(mySeller?.id ?? "");
     if (settings) setUnitPriceStr(fmtBrNumber(Number(settings.unit_price)));
   }
 
@@ -226,8 +237,15 @@ export default function VendasPage() {
             <strong>{brl(Number(settings?.unit_price ?? 0))}</strong>
           </p>
         </div>
-        <div className="text-xs text-coco-600">
-          Atalhos: F2 fiado · Ctrl+Enter finalizar
+        <div className="flex items-center gap-3">
+          {isAdmin && (
+            <Link href="/vendas/importar" className="btn-secondary">
+              📥 Importar Excel
+            </Link>
+          )}
+          <div className="text-xs text-coco-600">
+            Atalhos: F2 fiado · Ctrl+Enter finalizar
+          </div>
         </div>
       </header>
 
@@ -277,6 +295,29 @@ export default function VendasPage() {
                 className="input text-2xl font-semibold"
               />
             </div>
+          </div>
+
+          <div>
+            <label className="label">
+              Vendedor <span className="text-red-700">*</span>
+            </label>
+            <select
+              value={sellerId}
+              onChange={(e) => setSellerId(e.target.value)}
+              className="input"
+            >
+              <option value="">— Selecione —</option>
+              {sellers.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+            {sellers.length === 0 && (
+              <p className="text-xs text-amber-700 mt-1">
+                Nenhum vendedor ativo. Cadastre em Configurações → Vendedores.
+              </p>
+            )}
           </div>
 
           <div className="grid sm:grid-cols-2 gap-4">

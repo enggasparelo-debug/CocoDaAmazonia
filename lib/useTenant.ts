@@ -1,14 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { Tenant, Membership } from "@/lib/types";
+import type { Tenant, Membership, Seller } from "@/lib/types";
 
 export type TenantContext = {
   loading: boolean;
   tenant: Tenant | null;
   membership: Membership | null;
   isAdmin: boolean;
+  isOperator: boolean;
+  userId: string | null;
+  seller: Seller | null;
   refresh: () => Promise<void>;
 };
 
@@ -17,8 +20,12 @@ export function useTenant(): TenantContext {
   const [loading, setLoading] = useState(true);
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [membership, setMembership] = useState<Membership | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [seller, setSeller] = useState<Seller | null>(null);
 
-  async function load() {
+  // `supabase` é memoizado por @supabase/ssr (createBrowserClient é
+  // singleton-ish), então usar como dep não causa loops.
+  const load = useCallback(async () => {
     setLoading(true);
     const {
       data: { user },
@@ -26,9 +33,12 @@ export function useTenant(): TenantContext {
     if (!user) {
       setTenant(null);
       setMembership(null);
+      setUserId(null);
+      setSeller(null);
       setLoading(false);
       return;
     }
+    setUserId(user.id);
     const { data: m } = await supabase
       .from("memberships")
       .select("*")
@@ -44,19 +54,29 @@ export function useTenant(): TenantContext {
         .maybeSingle();
       setTenant((t as Tenant) ?? null);
     }
+    // Vendedor vinculado ao login (pode não existir; não é erro)
+    const { data: sl } = await supabase
+      .from("sellers")
+      .select("*")
+      .eq("user_id", user.id)
+      .eq("active", true)
+      .maybeSingle();
+    setSeller((sl as Seller | null) ?? null);
     setLoading(false);
-  }
+  }, [supabase]);
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [load]);
 
   return {
     loading,
     tenant,
     membership,
     isAdmin: membership?.role === "admin",
+    isOperator: membership?.role === "operador",
+    userId,
+    seller,
     refresh: load,
   };
 }

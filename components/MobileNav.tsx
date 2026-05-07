@@ -7,19 +7,30 @@ import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { useTenant } from "@/lib/useTenant";
 
-const items = [
-  { href: "/", label: "Painel", icon: "📊" },
-  { href: "/vendas", label: "Venda Rápida", icon: "🥥" },
-  { href: "/clientes", label: "Clientes", icon: "👥" },
-  { href: "/formas-pagamento", label: "Formas de Pagamento", icon: "💳" },
-  { href: "/receber", label: "Contas a Receber", icon: "📒" },
-  { href: "/caixa", label: "Caixa", icon: "💵" },
-  { href: "/despesas", label: "Despesas", icon: "💸" },
-  { href: "/estoque", label: "Estoque", icon: "📦" },
-  { href: "/financeiro", label: "Financeiro", icon: "💰" },
-  { href: "/relatorios", label: "Relatórios", icon: "📈" },
-  { href: "/configuracoes", label: "Configurações", icon: "⚙️" },
-  { href: "/auditoria", label: "Auditoria", icon: "🔍", adminOnly: true },
+type Role = "admin" | "operador";
+type NavItem = {
+  href: string;
+  label: string;
+  icon: string;
+  roles: Role[];
+};
+
+const items: NavItem[] = [
+  { href: "/", label: "Painel", icon: "📊", roles: ["admin"] },
+  { href: "/carga", label: "Minha Carga", icon: "🚚", roles: ["operador", "admin"] },
+  { href: "/vendas", label: "Venda Rápida", icon: "🥥", roles: ["admin"] },
+  { href: "/cargas", label: "Cargas", icon: "📋", roles: ["admin"] },
+  { href: "/clientes", label: "Clientes", icon: "👥", roles: ["admin", "operador"] },
+  { href: "/formas-pagamento", label: "Formas de Pagamento", icon: "💳", roles: ["admin"] },
+  { href: "/receber", label: "Contas a Receber", icon: "📒", roles: ["admin"] },
+  { href: "/caixa", label: "Caixa", icon: "💵", roles: ["admin"] },
+  { href: "/despesas", label: "Despesas", icon: "💸", roles: ["admin"] },
+  { href: "/estoque", label: "Estoque", icon: "📦", roles: ["admin"] },
+  { href: "/financeiro", label: "Financeiro", icon: "💰", roles: ["admin"] },
+  { href: "/operadores", label: "Operadores", icon: "🧑‍💼", roles: ["admin"] },
+  { href: "/relatorios", label: "Relatórios", icon: "📈", roles: ["admin"] },
+  { href: "/configuracoes", label: "Configurações", icon: "⚙️", roles: ["admin"] },
+  { href: "/auditoria", label: "Auditoria", icon: "🔍", roles: ["admin"] },
 ];
 
 export default function MobileNav() {
@@ -27,8 +38,10 @@ export default function MobileNav() {
   const path = usePathname();
   const router = useRouter();
   const supabase = createClient();
-  const { isAdmin } = useTenant();
-  const visible = items.filter((i) => !i.adminOnly || isAdmin);
+  const { membership, isAdmin } = useTenant();
+  const role: Role = (membership?.role ?? "operador") as Role;
+  const visible = items.filter((i) => i.roles.includes(role));
+  const quickHref = isAdmin ? "/vendas" : "/carga";
 
   async function logout() {
     await supabase.auth.signOut();
@@ -47,7 +60,7 @@ export default function MobileNav() {
           ☰
         </button>
         <div className="font-bold">🥥 Coco da Amazônia</div>
-        <Link href="/vendas" className="text-2xl" aria-label="Venda rápida">
+        <Link href={quickHref} className="text-2xl" aria-label="Atalho">
           ＋
         </Link>
       </header>
@@ -60,7 +73,13 @@ export default function MobileNav() {
           >
             <div className="flex items-center justify-between mb-4">
               <div className="text-xl font-bold">🥥 Coco</div>
-              <button onClick={() => setOpen(false)} className="text-2xl">×</button>
+              <button
+                onClick={() => setOpen(false)}
+                className="text-2xl min-h-[44px] min-w-[44px]"
+                aria-label="Fechar menu"
+              >
+                ×
+              </button>
             </div>
             <nav className="space-y-1 flex-1">
               {visible.map((it) => {
