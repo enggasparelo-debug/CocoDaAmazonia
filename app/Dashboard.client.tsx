@@ -142,6 +142,10 @@ export default function DashboardClient() {
   const [editing, setEditing] = useState<Sale | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Métrica do gráfico: faturamento R$ / cocos vendidos / preço médio R$/coco.
+  const [chartMetric, setChartMetric] = useState<
+    "revenue" | "cocos" | "avg_price"
+  >("revenue");
   // Contagens pra onboarding (só carrega 1× por tenant)
   const [counts, setCounts] = useState<{
     vehicles: number;
@@ -478,6 +482,11 @@ export default function DashboardClient() {
   const lucroAtual = recebido - state.curExpenses;
   const lucroPrev = state.prevPaymentsTotal - state.prevExpenses;
   const totalCocos = state.curSales.reduce((s, r) => s + r.quantity, 0);
+  const avgPrice = totalCocos > 0 ? faturado / totalCocos : 0;
+  const cocosPerDay = useMemo(() => {
+    const days = rangeDays(range).length || 1;
+    return totalCocos / days;
+  }, [totalCocos, range]);
   const recebidoPctFat =
     faturado > 0 ? Math.round((recebido / faturado) * 100) : null;
 
@@ -496,51 +505,50 @@ export default function DashboardClient() {
         return t;
       })()
     );
-    if (granularity === "week") {
-      const buckets = rangeWeeks(range);
-      const out = bucketBy(
-        state.chartSales,
-        buckets,
-        (r) => new Date(r.created_at),
-        (r) => r.total,
-        (d) => fmtYmd(startOfWeekMonday(d))
-      );
-      return out.map((b) => {
-        const d = ymdToDate(b.date);
-        return {
-          date: b.date,
-          value: b.value,
-          label: d.toLocaleDateString("pt-BR", {
-            day: "2-digit",
-            month: "2-digit",
-          }),
-          subLabel: "sem",
-          highlight: b.date === fmtYmd(startOfWeekMonday(ymdToDate(todayKey))),
-        };
-      });
+    const buckets =
+      granularity === "week" ? rangeWeeks(range) : rangeDays(range);
+    const keyFn = (d: Date) =>
+      granularity === "week" ? fmtYmd(startOfWeekMonday(d)) : fmtYmd(d);
+    // Bucket triplo: revenue, cocos e contagem de vendas (pra média).
+    const accs = buckets.map(() => ({ revenue: 0, cocos: 0 }));
+    const idx = new Map<string, number>();
+    buckets.forEach((d, i) => idx.set(fmtYmd(d), i));
+    for (const r of state.chartSales) {
+      const k = keyFn(new Date(r.created_at));
+      const i = idx.get(k);
+      if (i === undefined) continue;
+      accs[i].revenue += r.total;
+      accs[i].cocos += r.quantity;
     }
-    const buckets = rangeDays(range);
-    const out = bucketBy(
-      state.chartSales,
-      buckets,
-      (r) => new Date(r.created_at),
-      (r) => r.total,
-      (d) => fmtYmd(d)
-    );
-    return out.map((b) => {
-      const d = ymdToDate(b.date);
+    const todayBucketKey =
+      granularity === "week"
+        ? fmtYmd(startOfWeekMonday(ymdToDate(todayKey)))
+        : todayKey;
+    return buckets.map((d, i) => {
+      const date = fmtYmd(d);
+      const acc = accs[i];
+      let value: number;
+      if (chartMetric === "cocos") value = acc.cocos;
+      else if (chartMetric === "avg_price")
+        value = acc.cocos > 0 ? acc.revenue / acc.cocos : 0;
+      else value = acc.revenue;
       return {
-        date: b.date,
-        value: b.value,
+        date,
+        value,
         label: d.toLocaleDateString("pt-BR", {
           day: "2-digit",
           month: "2-digit",
         }),
-        subLabel: WEEKDAY_LABELS[d.getDay()],
-        highlight: b.date === todayKey,
+        subLabel:
+          granularity === "week" ? "sem" : WEEKDAY_LABELS[d.getDay()],
+        highlight: date === todayBucketKey,
       };
     });
-  }, [granularity, range, state.chartSales]);
+  }, [granularity, range, state.chartSales, chartMetric]);
+
+  // Preço médio é R$, demais BRL/Int adequam o eixo Y do BarChart.
+  const chartUnit: "brl" | "int" =
+    chartMetric === "cocos" ? "int" : "brl";
 
   const chartSummary = useMemo(() => {
     const total = chartPoints.reduce((s, p) => s + p.value, 0);
@@ -872,7 +880,25 @@ export default function DashboardClient() {
         />
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <DashboardKpi
+          label="Cocos vendidos"
+          icon="🥥"
+          accent="primary"
+          value={totalCocos.toLocaleString("pt-BR")}
+          sub={
+            cocosPerDay > 0
+              ? `${Math.round(cocosPerDay).toLocaleString("pt-BR")}/dia`
+              : undefined
+          }
+        />
+        <DashboardKpi
+          label="Preço médio"
+          icon="🏷️"
+          accent="green"
+          value={totalCocos > 0 ? brl(avgPrice) : "—"}
+          sub={totalCocos > 0 ? "R$/coco" : "sem vendas"}
+        />
         <DashboardKpi
           label="A receber (fiado)"
           icon="📒"
@@ -921,8 +947,12 @@ export default function DashboardClient() {
         <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
           <div>
             <h2 className="text-lg font-bold text-coco-900">
-              Vendas por {granularity === "week" ? "semana" : "dia"} ·{" "}
-              {rangeLabel}
+              {chartMetric === "cocos"
+                ? "Cocos vendidos"
+                : chartMetric === "avg_price"
+                ? "Preço médio (R$/coco)"
+                : "Faturamento"}{" "}
+              por {granularity === "week" ? "semana" : "dia"} · {rangeLabel}
               {sellerLabel && (
                 <span className="text-coco-600 font-normal text-base ml-1">
                   · {sellerLabel}
@@ -930,8 +960,25 @@ export default function DashboardClient() {
               )}
             </h2>
             <p className="text-xs text-coco-600">
-              Total {brl(chartSummary.total)} · média{" "}
-              {brl(chartSummary.avg)}/{granularity === "week" ? "sem" : "dia"}
+              {chartMetric === "cocos" ? (
+                <>
+                  Total {totalCocos.toLocaleString("pt-BR")} · média{" "}
+                  {Math.round(chartSummary.avg).toLocaleString("pt-BR")}/
+                  {granularity === "week" ? "sem" : "dia"}
+                </>
+              ) : chartMetric === "avg_price" ? (
+                <>
+                  Geral {totalCocos > 0 ? brl(avgPrice) : "—"} · média por{" "}
+                  {granularity === "week" ? "semana" : "dia"}{" "}
+                  {brl(chartSummary.avg)}
+                </>
+              ) : (
+                <>
+                  Total {brl(chartSummary.total)} · média{" "}
+                  {brl(chartSummary.avg)}/
+                  {granularity === "week" ? "sem" : "dia"}
+                </>
+              )}
               {chartSummary.peak.value > 0 && (
                 <>
                   {" "}
@@ -940,7 +987,13 @@ export default function DashboardClient() {
                     "pt-BR",
                     { day: "2-digit", month: "2-digit" }
                   )}{" "}
-                  ({brl(chartSummary.peak.value)})
+                  (
+                  {chartUnit === "int"
+                    ? Math.round(chartSummary.peak.value).toLocaleString(
+                        "pt-BR"
+                      )
+                    : brl(chartSummary.peak.value)}
+                  )
                 </>
               )}
             </p>
@@ -949,8 +1002,31 @@ export default function DashboardClient() {
             ver mais
           </Link>
         </div>
+
+        <div className="flex flex-wrap gap-1 bg-coco-50 p-1 rounded-xl mb-3 w-fit">
+          {(
+            [
+              { id: "revenue", label: "R$" },
+              { id: "cocos", label: "Cocos" },
+              { id: "avg_price", label: "R$/coco" },
+            ] as const
+          ).map((m) => (
+            <button
+              key={m.id}
+              onClick={() => setChartMetric(m.id)}
+              className={`px-3 py-1 text-sm rounded-lg transition-colors whitespace-nowrap ${
+                chartMetric === m.id
+                  ? "bg-white text-coco-900 shadow-sm font-semibold"
+                  : "text-coco-700 hover:bg-white/60"
+              }`}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+
         {chartPoints.length > 0 && chartSummary.total > 0 ? (
-          <BarChart points={chartPoints} />
+          <BarChart points={chartPoints} unit={chartUnit} />
         ) : (
           <p className="text-coco-600 text-sm">
             Sem vendas no intervalo
