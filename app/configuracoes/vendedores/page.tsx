@@ -5,6 +5,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import type { Seller, Membership } from "@/lib/types";
 import { useToast } from "@/components/Toast";
+import { SkeletonRows } from "@/components/Skeleton";
 
 const empty: Partial<Seller> = {
   name: "",
@@ -110,7 +111,7 @@ export default function VendedoresPage() {
 
       <div className="card">
         {loading ? (
-          <p className="text-coco-600">Carregando…</p>
+          <SkeletonRows count={4} />
         ) : rows.length === 0 ? (
           <p className="text-coco-600">Nenhum vendedor cadastrado.</p>
         ) : (

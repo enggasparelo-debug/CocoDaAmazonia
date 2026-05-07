@@ -165,7 +165,7 @@ export default function CargaPage() {
 
       <Section
         title={`Vendas (${sales.length})`}
-        empty="Nenhuma venda ainda."
+        empty="Nenhuma venda ainda. Use o formulário acima pra registrar a primeira venda dessa carga."
         rows={sales.map((s) => (
           <div
             key={s.id}

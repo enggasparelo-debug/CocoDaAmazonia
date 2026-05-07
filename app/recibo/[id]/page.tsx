@@ -71,7 +71,7 @@ export default function ReciboPage() {
           </button>
         </div>
 
-        <div className="border border-coco-200 rounded-2xl p-5 print:border-0">
+        <div className="recibo-card border border-coco-200 rounded-2xl p-5 print:border-0">
           <div className="text-center mb-4">
             <div className="text-3xl">🥥</div>
             <h1 className="text-xl font-bold">Coco da Amazônia</h1>
@@ -176,11 +176,22 @@ export default function ReciboPage() {
 
       <style jsx global>{`
         @media print {
+          html,
           body {
             background: white;
+            margin: 0;
+            padding: 0;
           }
+          /* Margens compactas — funciona em A4 e térmica 80mm/58mm.
+             Pra papel térmico estreito, configure o driver da
+             impressora pra papel customizado (ex.: 80mm × auto). */
           @page {
-            margin: 10mm;
+            margin: 5mm;
+          }
+          .recibo-card {
+            border: none !important;
+            padding: 0 !important;
+            max-width: 100% !important;
           }
         }
       `}</style>

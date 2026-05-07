@@ -333,9 +333,17 @@ function ReceberInner() {
         <div className="card lg:col-span-1">
           <h2 className="font-bold text-coco-900 mb-3">Clientes em aberto</h2>
           {balances.length === 0 ? (
-            <p className="text-coco-600 text-sm">
-              Nenhum saldo em aberto. 🎉
-            </p>
+            <div className="text-sm space-y-2">
+              <p className="text-coco-600">
+                Nenhum saldo em aberto. 🎉
+              </p>
+              <a
+                href="/relatorios"
+                className="text-coco-700 underline hover:text-coco-900"
+              >
+                Ver vendas pagas →
+              </a>
+            </div>
           ) : (
             <ul className="space-y-1">
               {balances.map((b) => {

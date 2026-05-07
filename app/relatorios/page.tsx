@@ -69,6 +69,22 @@ export default function RelatoriosPage() {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Sale | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Sale | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  function toggleId(id: string) {
+    setSelectedIds((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function toggleAll() {
+    setSelectedIds((cur) => {
+      if (cur.size === sales.length && sales.length > 0) return new Set();
+      return new Set(sales.map((s) => s.id));
+    });
+  }
 
   async function deleteSale(s: Sale) {
     const { error } = await supabase.from("sales").delete().eq("id", s.id);
@@ -181,7 +197,12 @@ export default function RelatoriosPage() {
   }, [sales, payments]);
 
   function buildExportRows() {
-    return sales.map((s) => ({
+    // Se houver linhas selecionadas, exporta apenas elas. Senão, todas.
+    const source =
+      selectedIds.size > 0
+        ? sales.filter((s) => selectedIds.has(s.id))
+        : sales;
+    return source.map((s) => ({
       "#": s.code,
       data: fmtDate(s.created_at),
       cliente: s.customer_id
@@ -199,12 +220,18 @@ export default function RelatoriosPage() {
 
   function exportCsv() {
     const rows = buildExportRows();
-    downloadCsv(`vendas_${from}_${to}.csv`, rowsToCsv(rows));
+    const suffix = selectedIds.size > 0 ? `_sel${selectedIds.size}` : "";
+    downloadCsv(`vendas_${from}_${to}${suffix}.csv`, rowsToCsv(rows));
   }
 
   async function exportXlsx() {
     const rows = buildExportRows();
-    await downloadXlsx(`vendas_${from}_${to}.xlsx`, "Vendas", rows);
+    const suffix = selectedIds.size > 0 ? `_sel${selectedIds.size}` : "";
+    await downloadXlsx(
+      `vendas_${from}_${to}${suffix}.xlsx`,
+      "Vendas",
+      rows
+    );
   }
 
   return (
@@ -216,12 +243,23 @@ export default function RelatoriosPage() {
             Vendas detalhadas com filtros por período, cliente e status.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          {selectedIds.size > 0 && (
+            <span className="text-xs text-coco-700 font-medium">
+              {selectedIds.size} selecionada(s)
+              <button
+                onClick={() => setSelectedIds(new Set())}
+                className="ml-2 underline"
+              >
+                limpar
+              </button>
+            </span>
+          )}
           <button onClick={exportCsv} className="btn-secondary">
-            ⬇ CSV
+            ⬇ CSV{selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}
           </button>
           <button onClick={exportXlsx} className="btn-secondary">
-            ⬇ Excel
+            ⬇ Excel{selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}
           </button>
         </div>
       </header>
@@ -421,6 +459,16 @@ export default function RelatoriosPage() {
           <table className="table">
             <thead>
               <tr>
+                <th>
+                  <input
+                    type="checkbox"
+                    checked={
+                      sales.length > 0 && selectedIds.size === sales.length
+                    }
+                    onChange={toggleAll}
+                    aria-label="Selecionar todas as vendas"
+                  />
+                </th>
                 <th>#</th>
                 <th>Data</th>
                 <th>Cliente</th>
@@ -435,6 +483,14 @@ export default function RelatoriosPage() {
             <tbody>
               {sales.map((s) => (
                 <tr key={s.id} className={s.status === "cancelada" ? "opacity-60" : ""}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(s.id)}
+                      onChange={() => toggleId(s.id)}
+                      aria-label={`Selecionar venda #${s.code}`}
+                    />
+                  </td>
                   <td className="font-mono font-semibold">#{s.code}</td>
                   <td>{fmtDate(s.created_at)}</td>
                   <td>

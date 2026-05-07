@@ -10,6 +10,7 @@ import {
   type DashboardPreset,
 } from "@/lib/dashboard";
 import type { Carga, Sale, Seller } from "@/lib/types";
+import { SkeletonRows } from "@/components/Skeleton";
 
 type SellerMetrics = {
   seller: Seller;
@@ -187,7 +188,7 @@ export default function OperadoresClient() {
 
       <div className="card overflow-x-auto">
         {loading ? (
-          <p className="text-coco-600">Carregando…</p>
+          <SkeletonRows count={6} />
         ) : metrics.length === 0 ? (
           <p className="text-coco-600">
             Sem dados de vendedores no período.

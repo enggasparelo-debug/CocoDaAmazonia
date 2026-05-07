@@ -32,6 +32,10 @@ import DashboardAlerts, {
 } from "@/components/DashboardAlerts";
 import TopList from "@/components/TopList";
 import SaleEditor from "@/components/SaleEditor";
+import EmptyOnboarding, {
+  type OnboardingStep,
+} from "@/components/EmptyOnboarding";
+import { useTenant } from "@/lib/useTenant";
 
 type SaleLite = Pick<
   Sale,
@@ -112,6 +116,7 @@ const WEEKDAY_LABELS = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
 
 export default function DashboardClient() {
   const supabase = createClient();
+  const { tenant, isAdmin } = useTenant();
   const [preset, setPreset] = useState<DashboardPreset>("hoje");
   const [state, setState] = useState<State>(EMPTY);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -120,6 +125,13 @@ export default function DashboardClient() {
   const [editing, setEditing] = useState<Sale | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Contagens pra onboarding (só carrega 1× por tenant)
+  const [counts, setCounts] = useState<{
+    vehicles: number;
+    sellers: number;
+    methods: number;
+    cargas: number;
+  } | null>(null);
   // Filtros do gráfico (não mexe nos KPIs / top lists)
   const [chartDays, setChartDays] = useState<ChartDays>(14);
   const [chartSellerId, setChartSellerId] = useState<string>("");
@@ -365,6 +377,39 @@ export default function DashboardClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preset]);
 
+  // Onboarding: carrega contagens uma vez por tenant pra decidir
+  // quais passos exibir no checklist.
+  useEffect(() => {
+    if (!tenant || !isAdmin) return;
+    let cancelled = false;
+    (async () => {
+      const [veh, sl, mt, cg] = await Promise.all([
+        supabase
+          .from("vehicles")
+          .select("id", { count: "exact", head: true }),
+        supabase
+          .from("sellers")
+          .select("id", { count: "exact", head: true }),
+        supabase
+          .from("payment_methods")
+          .select("id", { count: "exact", head: true }),
+        supabase
+          .from("cargas")
+          .select("id", { count: "exact", head: true }),
+      ]);
+      if (cancelled) return;
+      setCounts({
+        vehicles: veh.count ?? 0,
+        sellers: sl.count ?? 0,
+        methods: mt.count ?? 0,
+        cargas: cg.count ?? 0,
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tenant, isAdmin, supabase]);
+
   // Realtime: invalida o painel quando vendas, pagamentos ou despesas
   // mudam em qualquer lugar do app. Faz reload simples com debounce
   // pra agrupar bursts (ex.: import de Excel).
@@ -580,6 +625,46 @@ export default function DashboardClient() {
   const presetLabel =
     DASHBOARD_PRESETS.find((p) => p.id === preset)?.label ?? "";
 
+  // Onboarding: só renderiza pra admin com tenant fresco (<14 dias)
+  // E que ainda não fechou todos os passos. Não pisca: se counts não
+  // chegou, não renderiza nada.
+  const onboardingSteps = useMemo<OnboardingStep[]>(() => {
+    if (!isAdmin || !counts || !tenant) return [];
+    const tenantAgeDays =
+      (Date.now() - new Date(tenant.created_at).getTime()) / 86_400_000;
+    if (tenantAgeDays > 14) return [];
+    return [
+      {
+        id: "methods",
+        label: "Configurar formas de pagamento",
+        description: "Dinheiro, PIX, cartão — com taxas pra DRE.",
+        href: "/formas-pagamento",
+        done: counts.methods > 0,
+      },
+      {
+        id: "vehicles",
+        label: "Cadastrar veículo",
+        description: "Carro/moto da rota.",
+        href: "/configuracoes/veiculos",
+        done: counts.vehicles > 0,
+      },
+      {
+        id: "sellers",
+        label: "Cadastrar vendedor",
+        description: "Quem vende em campo (com comissão se quiser).",
+        href: "/configuracoes/vendedores",
+        done: counts.sellers > 0,
+      },
+      {
+        id: "cargas",
+        label: "Abrir primeira carga",
+        description: "Estoque, operador, rota — começa a operação.",
+        href: "/carga/abrir",
+        done: counts.cargas > 0,
+      },
+    ];
+  }, [isAdmin, counts, tenant]);
+
   return (
     <div className="space-y-6">
       <header className="flex items-start justify-between flex-wrap gap-3">
@@ -610,6 +695,10 @@ export default function DashboardClient() {
         <div className="card border-red-300 bg-red-50 text-red-700">
           Erro ao carregar dados: {error}
         </div>
+      )}
+
+      {onboardingSteps.length > 0 && (
+        <EmptyOnboarding steps={onboardingSteps} />
       )}
 
       <DashboardAlerts alerts={alerts} />

@@ -8,6 +8,7 @@ import { useToast } from "@/components/Toast";
 import ConfirmModal from "@/components/ConfirmModal";
 import { useTenant } from "@/lib/useTenant";
 import type { Membership, Seller } from "@/lib/types";
+import { SkeletonRows } from "@/components/Skeleton";
 
 type Row = Membership & { seller_name: string | null };
 
@@ -91,7 +92,7 @@ export default function OperadoresAdminClient() {
 
       <div className="card">
         {loading ? (
-          <p className="text-coco-600">Carregando…</p>
+          <SkeletonRows count={4} />
         ) : rows.length === 0 ? (
           <p className="text-coco-600">Sem membros cadastrados.</p>
         ) : (

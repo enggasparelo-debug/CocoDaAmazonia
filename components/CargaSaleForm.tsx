@@ -167,7 +167,7 @@ export default function CargaSaleForm({
                   const cur = parseInt(quantity || "0", 10);
                   setQuantity(String(cur + n));
                 }}
-                className="btn-ghost text-sm px-3 py-1.5"
+                className="btn-ghost text-base px-4 min-h-[44px]"
                 aria-label={`Adicionar ${n} cocos`}
               >
                 +{n}
@@ -176,7 +176,7 @@ export default function CargaSaleForm({
             <button
               type="button"
               onClick={() => setQuantity("")}
-              className="btn-ghost text-sm px-3 py-1.5 text-red-700 ml-auto"
+              className="btn-ghost text-base px-4 min-h-[44px] text-red-700 ml-auto"
               aria-label="Limpar quantidade"
             >
               limpar

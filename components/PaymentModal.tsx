@@ -104,13 +104,25 @@ export default function PaymentModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+    <div
+      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+      onClick={(e) => {
+        // Tap fora do card fecha o modal (mas não enquanto salva).
+        if (e.target === e.currentTarget && !saving) onClose();
+      }}
+      role="dialog"
+      aria-modal="true"
+    >
       <div className="bg-white rounded-2xl shadow-xl max-w-2xl w-full p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-2xl font-bold text-coco-900">
             {done ? "Venda finalizada ✅" : "Recebimento"}
           </h2>
-          <button onClick={onClose} className="btn-ghost">
+          <button
+            onClick={onClose}
+            className="btn-ghost"
+            aria-label="Fechar"
+          >
             Fechar
           </button>
         </div>
@@ -211,6 +223,7 @@ export default function PaymentModal({
                         <input
                           type="number"
                           step="0.01"
+                          inputMode="decimal"
                           value={e.amount}
                           onChange={(ev) =>
                             updateEntry(i, {
