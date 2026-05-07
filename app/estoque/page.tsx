@@ -87,6 +87,7 @@ export default function EstoquePage() {
     quantity: 0,
     unit_cost: 0,
     notes: "",
+    created_at: nowLocalIso(),
   });
   const [editing, setEditing] = useState<InventoryMovement | null>(null);
   const [editForm, setEditForm] = useState({
@@ -283,16 +284,26 @@ export default function EstoquePage() {
 
   async function save() {
     if (form.quantity <= 0) return toast.error("Quantidade deve ser positiva.");
+    const when = new Date(form.created_at);
+    if (isNaN(when.getTime()))
+      return toast.error("Data/hora inválida.");
     const { error } = await supabase.from("inventory_movements").insert({
       kind: form.kind,
       quantity: form.quantity,
       unit_cost:
         form.kind === "entrada" && form.unit_cost > 0 ? form.unit_cost : null,
       notes: form.notes || null,
+      created_at: when.toISOString(),
     });
     if (error) return toast.error(error.message);
     toast.success("Movimento registrado.");
-    setForm({ kind: "entrada", quantity: 0, unit_cost: 0, notes: "" });
+    setForm({
+      kind: "entrada",
+      quantity: 0,
+      unit_cost: 0,
+      notes: "",
+      created_at: nowLocalIso(),
+    });
     load();
   }
 
@@ -614,7 +625,7 @@ export default function EstoquePage() {
 
       <div className="card">
         <h2 className="font-bold mb-3">Novo movimento</h2>
-        <div className="grid sm:grid-cols-4 gap-3">
+        <div className="grid sm:grid-cols-5 gap-3">
           <div>
             <label className="label">Tipo</label>
             <select
@@ -631,6 +642,26 @@ export default function EstoquePage() {
               <option value="perda">Perda</option>
               <option value="ajuste">Ajuste manual</option>
             </select>
+          </div>
+          <div>
+            <label className="label">Data / hora</label>
+            <input
+              type="datetime-local"
+              className="input"
+              value={form.created_at}
+              onChange={(e) =>
+                setForm({ ...form, created_at: e.target.value })
+              }
+            />
+            <button
+              type="button"
+              className="text-xs text-coco-700 underline mt-1"
+              onClick={() =>
+                setForm({ ...form, created_at: nowLocalIso() })
+              }
+            >
+              agora
+            </button>
           </div>
           <div>
             <label className="label">Quantidade</label>
