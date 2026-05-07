@@ -65,9 +65,28 @@ function toNumber(v: unknown): number {
 
 function toDate(v: unknown): Date | null {
   if (v instanceof Date && !isNaN(v.getTime())) {
-    // Coloca no meio-dia local pra evitar deslizes de fuso na hora de salvar.
-    const d = new Date(v.getFullYear(), v.getMonth(), v.getDate(), 12, 0, 0, 0);
-    return d;
+    // ExcelJS lê células-data como Date em UTC meia-noite (ex.: "06/05/2026"
+    // vira 2026-05-06T00:00:00Z). Em fusos negativos (Brasil UTC-3), os
+    // getters locais voltam o dia anterior. Quando a hora UTC for 00:00:00,
+    // tratamos como data-pura e usamos os componentes UTC.
+    const isUtcMidnight =
+      v.getUTCHours() === 0 &&
+      v.getUTCMinutes() === 0 &&
+      v.getUTCSeconds() === 0;
+    if (isUtcMidnight) {
+      return new Date(
+        v.getUTCFullYear(),
+        v.getUTCMonth(),
+        v.getUTCDate(),
+        12,
+        0,
+        0,
+        0
+      );
+    }
+    // Caso a célula traga hora explícita, mantém o dia local (consistente
+    // com o que o usuário vê na barra de fórmulas).
+    return new Date(v.getFullYear(), v.getMonth(), v.getDate(), 12, 0, 0, 0);
   }
   if (typeof v === "string") {
     const s = v.trim();
@@ -91,12 +110,21 @@ function toDate(v: unknown): Date | null {
     }
   }
   if (typeof v === "number") {
-    // Excel serial (dias desde 1899-12-30). ExcelJS já converte com cellDates,
-    // mas no caso do número cru fazemos a conversão.
+    // Excel serial (dias desde 1899-12-30). A multiplicação produz ms em
+    // UTC meia-noite — usar componentes UTC pra não escorregar 1 dia em
+    // fusos negativos (mesmo motivo do branch acima).
     const ms = Math.round((v - 25569) * 86_400_000);
     const d = new Date(ms);
     if (isNaN(d.getTime())) return null;
-    return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0, 0);
+    return new Date(
+      d.getUTCFullYear(),
+      d.getUTCMonth(),
+      d.getUTCDate(),
+      12,
+      0,
+      0,
+      0
+    );
   }
   return null;
 }
