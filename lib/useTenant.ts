@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Tenant, Membership, Seller } from "@/lib/types";
 
@@ -23,7 +23,9 @@ export function useTenant(): TenantContext {
   const [userId, setUserId] = useState<string | null>(null);
   const [seller, setSeller] = useState<Seller | null>(null);
 
-  async function load() {
+  // `supabase` é memoizado por @supabase/ssr (createBrowserClient é
+  // singleton-ish), então usar como dep não causa loops.
+  const load = useCallback(async () => {
     setLoading(true);
     const {
       data: { user },
@@ -61,12 +63,11 @@ export function useTenant(): TenantContext {
       .maybeSingle();
     setSeller((sl as Seller | null) ?? null);
     setLoading(false);
-  }
+  }, [supabase]);
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [load]);
 
   return {
     loading,

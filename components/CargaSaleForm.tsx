@@ -1,26 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { errorMessage } from "@/lib/ui";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { brl } from "@/lib/format";
+import { brl, fmtBrNumber, parseBrNumber } from "@/lib/format";
 import type { Customer, PaymentMethod, ProductSettings } from "@/lib/types";
 import PaymentModal from "@/components/PaymentModal";
 import CustomerQuickForm from "@/components/CustomerQuickForm";
 import { useToast } from "@/components/Toast";
 import { useTenant } from "@/lib/useTenant";
-
-function parseBrNumber(s: string): number {
-  if (!s) return 0;
-  const norm = s.replace(/\s/g, "").replace(/\./g, "").replace(",", ".");
-  const n = parseFloat(norm);
-  return isNaN(n) ? 0 : n;
-}
-
-function fmtBrNumber(n: number): string {
-  return n.toFixed(2).replace(".", ",");
-}
 
 export default function CargaSaleForm({
   cargaId,
@@ -62,7 +52,7 @@ export default function CargaSaleForm({
     [qty, unitPrice]
   );
 
-  async function loadData() {
+  const loadData = useCallback(async () => {
     const [s, c, m] = await Promise.all([
       supabase.from("product_settings").select("*").limit(1).maybeSingle(),
       supabase.from("customers").select("*").eq("active", true).order("name"),
@@ -78,12 +68,11 @@ export default function CargaSaleForm({
     }
     setCustomers((c.data as Customer[]) ?? []);
     setMethods((m.data as PaymentMethod[]) ?? []);
-  }
+  }, [supabase]);
 
   useEffect(() => {
     loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadData]);
 
   function reset() {
     setQuantity("");
@@ -119,8 +108,8 @@ export default function CargaSaleForm({
         total: Number(data.total),
         hasCustomer: !!data.customer_id,
       });
-    } catch (e: any) {
-      toast.error(e.message ?? String(e));
+    } catch (e: unknown) {
+      toast.error(errorMessage(e));
     } finally {
       setSaving(false);
     }
@@ -169,6 +158,30 @@ export default function CargaSaleForm({
             className="input text-4xl text-center font-bold h-16"
             autoFocus
           />
+          <div className="flex gap-2 mt-2 flex-wrap">
+            {[10, 50, 100, 200, 500].map((n) => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => {
+                  const cur = parseInt(quantity || "0", 10);
+                  setQuantity(String(cur + n));
+                }}
+                className="btn-ghost text-base px-4 min-h-[44px]"
+                aria-label={`Adicionar ${n} cocos`}
+              >
+                +{n}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setQuantity("")}
+              className="btn-ghost text-base px-4 min-h-[44px] text-red-700 ml-auto"
+              aria-label="Limpar quantidade"
+            >
+              limpar
+            </button>
+          </div>
         </div>
 
         <div>

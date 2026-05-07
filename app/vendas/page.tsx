@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { errorMessage } from "@/lib/ui";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { brl } from "@/lib/format";
+import { brl, fmtBrNumber, parseBrNumber } from "@/lib/format";
+import { nowLocalIso } from "@/lib/datetime";
 import type {
   Customer,
   PaymentMethod,
@@ -14,28 +17,10 @@ import { useToast } from "@/components/Toast";
 import { enqueueSale } from "@/lib/offlineQueue";
 import { useTenant } from "@/lib/useTenant";
 
-// Aceita "3", "3,5", "3.50" etc. Retorna 0 se inválido.
-function parseBrNumber(s: string): number {
-  if (!s) return 0;
-  const norm = s.replace(/\s/g, "").replace(/\./g, "").replace(",", ".");
-  const n = parseFloat(norm);
-  return isNaN(n) ? 0 : n;
-}
-
-function fmtBrNumber(n: number): string {
-  return n.toFixed(2).replace(".", ",");
-}
-
-function nowLocalIso(): string {
-  const d = new Date();
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 16);
-}
-
 export default function VendasPage() {
   const supabase = createClient();
   const toast = useToast();
-  const { seller: mySeller } = useTenant();
+  const { seller: mySeller, isAdmin } = useTenant();
   const [settings, setSettings] = useState<ProductSettings | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
@@ -124,7 +109,10 @@ export default function VendasPage() {
       .eq("customer_id", customerId)
       .maybeSingle()
       .then(({ data }) => {
-        if (data) setCustomerBalance(data as any);
+        if (data)
+          setCustomerBalance(
+            data as { open_balance: number; credit_limit: number | null }
+          );
       });
   }, [customerId, supabase]);
 
@@ -166,8 +154,8 @@ export default function VendasPage() {
       setOpenSaleId(data.id);
       setOpenSaleTotal(Number(data.total));
       setOpenSaleHasCustomer(!!data.customer_id);
-    } catch (e: any) {
-      toast.error(e.message ?? String(e));
+    } catch (e: unknown) {
+      toast.error(errorMessage(e));
     } finally {
       setSavingSale(false);
     }
@@ -194,13 +182,13 @@ export default function VendasPage() {
       if (error) throw error;
       toast.success(`Venda fiada de ${brl(total)} lançada.`);
       reset();
-    } catch (e: any) {
+    } catch (e: unknown) {
       try {
         await enqueueSale(payload);
         toast.warn(`Falhou online — venda enfileirada (${brl(total)}).`);
         reset();
       } catch {
-        toast.error(e.message ?? String(e));
+        toast.error(errorMessage(e));
       }
     } finally {
       setSavingSale(false);
@@ -249,8 +237,15 @@ export default function VendasPage() {
             <strong>{brl(Number(settings?.unit_price ?? 0))}</strong>
           </p>
         </div>
-        <div className="text-xs text-coco-600">
-          Atalhos: F2 fiado · Ctrl+Enter finalizar
+        <div className="flex items-center gap-3">
+          {isAdmin && (
+            <Link href="/vendas/importar" className="btn-secondary">
+              📥 Importar Excel
+            </Link>
+          )}
+          <div className="text-xs text-coco-600">
+            Atalhos: F2 fiado · Ctrl+Enter finalizar
+          </div>
         </div>
       </header>
 

@@ -25,6 +25,37 @@ export default function ClientesPage() {
   const [editing, setEditing] = useState<Partial<Customer> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkConfirm, setBulkConfirm] = useState(false);
+  const [bulkRunning, setBulkRunning] = useState(false);
+
+  function toggleId(id: string) {
+    setSelectedIds((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  async function bulkDeactivate() {
+    if (selectedIds.size === 0) return;
+    setBulkRunning(true);
+    const ids = Array.from(selectedIds);
+    const { error } = await supabase
+      .from("customers")
+      .update({ active: false })
+      .in("id", ids);
+    setBulkRunning(false);
+    setBulkConfirm(false);
+    if (error) {
+      setError(error.message);
+      return;
+    }
+    setSelectedIds(new Set());
+    load();
+  }
 
   async function load() {
     setLoading(true);
@@ -75,10 +106,12 @@ export default function ClientesPage() {
           : null,
       active: editing.active ?? true,
     };
+    setSaving(true);
     const op = editing.id
       ? supabase.from("customers").update(payload).eq("id", editing.id)
       : supabase.from("customers").insert(payload);
     const { error } = await op;
+    setSaving(false);
     if (error) {
       setError(error.message);
       return;
@@ -88,10 +121,13 @@ export default function ClientesPage() {
   }
 
   async function toggleActive(c: Customer) {
+    if (togglingId) return;
+    setTogglingId(c.id);
     await supabase
       .from("customers")
       .update({ active: !c.active })
       .eq("id", c.id);
+    setTogglingId(null);
     load();
   }
 
@@ -121,11 +157,94 @@ export default function ClientesPage() {
         {loading ? (
           <p className="text-coco-600">Carregando…</p>
         ) : filtered.length === 0 ? (
-          <p className="text-coco-600">Nenhum cliente cadastrado.</p>
+          <div className="text-center py-8 space-y-3">
+            <div className="text-5xl" aria-hidden="true">👤</div>
+            <p className="text-coco-700 font-medium">
+              {search.trim()
+                ? "Nenhum cliente bate com a busca."
+                : "Nenhum cliente cadastrado ainda."}
+            </p>
+            {!search.trim() && (
+              <button
+                className="btn-primary"
+                onClick={() => setEditing({ ...empty })}
+              >
+                + Cadastrar primeiro cliente
+              </button>
+            )}
+          </div>
         ) : (
+          <>
+            {selectedIds.size > 0 && (
+              <div className="mb-3 flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm">
+                <span className="font-medium text-amber-900">
+                  {selectedIds.size} selecionado(s)
+                </span>
+                <button
+                  onClick={() => setBulkConfirm(true)}
+                  className="btn-ghost text-red-700 text-sm"
+                  disabled={bulkRunning}
+                >
+                  Desativar selecionados
+                </button>
+                <button
+                  onClick={() => setSelectedIds(new Set())}
+                  className="text-coco-700 underline text-xs ml-auto"
+                >
+                  limpar seleção
+                </button>
+              </div>
+            )}
+            {bulkConfirm && (
+              <div className="mb-3 card border-red-300 bg-red-50">
+                <p className="text-red-800 font-medium mb-2">
+                  Desativar {selectedIds.size} cliente(s)?
+                </p>
+                <p className="text-red-700 text-sm mb-3">
+                  Eles ficarão inativos (não somem do histórico). Você
+                  pode reativar depois.
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={bulkDeactivate}
+                    disabled={bulkRunning}
+                    className="btn-primary !bg-red-600 hover:!bg-red-700"
+                  >
+                    {bulkRunning ? "Desativando…" : "Confirmar"}
+                  </button>
+                  <button
+                    onClick={() => setBulkConfirm(false)}
+                    className="btn-ghost"
+                    disabled={bulkRunning}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
           <table className="table">
             <thead>
               <tr>
+                <th>
+                  <input
+                    type="checkbox"
+                    checked={
+                      filtered.length > 0 &&
+                      selectedIds.size === filtered.length
+                    }
+                    onChange={() => {
+                      if (
+                        selectedIds.size === filtered.length &&
+                        filtered.length > 0
+                      ) {
+                        setSelectedIds(new Set());
+                      } else {
+                        setSelectedIds(new Set(filtered.map((c) => c.id)));
+                      }
+                    }}
+                    aria-label="Selecionar todos os clientes"
+                  />
+                </th>
                 <th>Nome</th>
                 <th>Telefone</th>
                 <th>Documento</th>
@@ -140,6 +259,14 @@ export default function ClientesPage() {
                 const bal = balances[c.id]?.open_balance ?? 0;
                 return (
                   <tr key={c.id}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(c.id)}
+                        onChange={() => toggleId(c.id)}
+                        aria-label={`Selecionar ${c.name}`}
+                      />
+                    </td>
                     <td className="font-medium">
                       <Link href={`/clientes/${c.id}`} className="text-coco-800 hover:underline">
                         {c.name}
@@ -187,9 +314,14 @@ export default function ClientesPage() {
                       </button>
                       <button
                         onClick={() => toggleActive(c)}
+                        disabled={togglingId === c.id}
                         className="btn-ghost text-sm"
                       >
-                        {c.active ? "Desativar" : "Ativar"}
+                        {togglingId === c.id
+                          ? "…"
+                          : c.active
+                          ? "Desativar"
+                          : "Ativar"}
                       </button>
                     </td>
                   </tr>
@@ -197,6 +329,7 @@ export default function ClientesPage() {
               })}
             </tbody>
           </table>
+          </>
         )}
       </div>
 
@@ -311,11 +444,19 @@ export default function ClientesPage() {
             )}
 
             <div className="flex justify-end gap-2 mt-5">
-              <button onClick={() => setEditing(null)} className="btn-ghost">
+              <button
+                onClick={() => setEditing(null)}
+                className="btn-ghost"
+                disabled={saving}
+              >
                 Cancelar
               </button>
-              <button onClick={save} className="btn-primary">
-                Salvar
+              <button
+                onClick={save}
+                className="btn-primary"
+                disabled={saving}
+              >
+                {saving ? "…" : "Salvar"}
               </button>
             </div>
           </div>

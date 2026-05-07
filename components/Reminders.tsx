@@ -41,13 +41,15 @@ export default function Reminders() {
         supabase.from("inventory_balance").select("*").maybeSingle(),
         supabase.from("product_settings").select("min_stock,name").maybeSingle(),
       ]);
-      const onHand = (bal as any)?.on_hand ?? 0;
-      const minStock = Number((prod as any)?.min_stock ?? 0);
+      const balRow = bal as { on_hand?: number } | null;
+      const prodRow = prod as { min_stock?: number; name?: string } | null;
+      const onHand = balRow?.on_hand ?? 0;
+      const minStock = Number(prodRow?.min_stock ?? 0);
       if (minStock > 0 && onHand <= minStock) {
         list.push({
           kind: "danger",
           msg: `📦 Estoque baixo: ${onHand} ${
-            (prod as any)?.name ?? "unidades"
+            prodRow?.name ?? "unidades"
           } (mínimo ${minStock}).`,
           href: "/estoque",
         });
@@ -58,7 +60,8 @@ export default function Reminders() {
         .from("customer_balances")
         .select("oldest_open_at, open_balance")
         .gt("open_balance", 0);
-      const overdue = (aging as any[] | null)?.filter((r) => {
+      type AgingRow = { oldest_open_at: string | null; open_balance: number };
+      const overdue = (aging as AgingRow[] | null)?.filter((r) => {
         if (!r.oldest_open_at) return false;
         const days =
           (Date.now() - new Date(r.oldest_open_at).getTime()) / 86_400_000;

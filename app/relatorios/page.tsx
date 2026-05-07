@@ -3,7 +3,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { brl, fmtDate } from "@/lib/format";
-import type { Customer, PaymentMethod, Sale } from "@/lib/types";
+import type {
+  Carga,
+  Customer,
+  PaymentMethod,
+  Sale,
+  Seller,
+} from "@/lib/types";
 import StatusBadge from "@/components/StatusBadge";
 import SaleEditor from "@/components/SaleEditor";
 import ConfirmModal from "@/components/ConfirmModal";
@@ -15,6 +21,7 @@ import {
   presetRange,
   type DateRangePreset,
 } from "@/lib/dateRanges";
+import { downloadCsv, downloadXlsx, rowsToCsv } from "@/lib/export";
 
 const PRESETS: DateRangePreset[] = [
   "hoje",
@@ -47,9 +54,14 @@ export default function RelatoriosPage() {
   const [to, setTo] = useState(todayStr());
   const [customerId, setCustomerId] = useState<string>("");
   const [status, setStatus] = useState<string>("");
+  const [sellerId, setSellerId] = useState<string>("");
+  const [cargaId, setCargaId] = useState<string>("");
+  const [methodFilter, setMethodFilter] = useState<string>("");
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
+  const [sellers, setSellers] = useState<Seller[]>([]);
+  const [cargas, setCargas] = useState<Carga[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [payments, setPayments] = useState<
     { sale_id: string; amount: number; payment_method_id: string }[]
@@ -57,6 +69,22 @@ export default function RelatoriosPage() {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Sale | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Sale | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  function toggleId(id: string) {
+    setSelectedIds((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function toggleAll() {
+    setSelectedIds((cur) => {
+      if (cur.size === sales.length && sales.length > 0) return new Set();
+      return new Set(sales.map((s) => s.id));
+    });
+  }
 
   async function deleteSale(s: Sale) {
     const { error } = await supabase.from("sales").delete().eq("id", s.id);
@@ -70,12 +98,20 @@ export default function RelatoriosPage() {
   }
 
   async function loadAux() {
-    const [c, m] = await Promise.all([
+    const [c, m, sl, cg] = await Promise.all([
       supabase.from("customers").select("*").order("name"),
       supabase.from("payment_methods").select("*"),
+      supabase.from("sellers").select("*").order("name"),
+      supabase
+        .from("cargas")
+        .select("*")
+        .order("opened_at", { ascending: false })
+        .limit(50),
     ]);
     setCustomers((c.data as Customer[]) ?? []);
     setMethods((m.data as PaymentMethod[]) ?? []);
+    setSellers((sl.data as Seller[]) ?? []);
+    setCargas((cg.data as Carga[]) ?? []);
   }
 
   async function loadReport() {
@@ -88,19 +124,34 @@ export default function RelatoriosPage() {
       .order("created_at", { ascending: false });
     if (customerId) q = q.eq("customer_id", customerId);
     if (status) q = q.eq("status", status);
+    if (sellerId) q = q.eq("seller_id", sellerId);
+    if (cargaId) q = q.eq("carga_id", cargaId);
     const { data: s } = await q;
-    setSales((s as Sale[]) ?? []);
+    let result = (s as Sale[]) ?? [];
 
-    if (s && s.length > 0) {
-      const ids = s.map((x) => x.id);
+    let pays: { sale_id: string; amount: number; payment_method_id: string }[] = [];
+    if (result.length > 0) {
+      const ids = result.map((x) => x.id);
       const { data: p } = await supabase
         .from("sale_payments")
         .select("sale_id, amount, payment_method_id")
         .in("sale_id", ids);
-      setPayments((p as any[]) ?? []);
-    } else {
-      setPayments([]);
+      pays = (p as typeof pays) ?? [];
     }
+
+    if (methodFilter) {
+      // Filtra pra vendas que tenham ao menos 1 pagamento na forma escolhida.
+      const saleIdsWithMethod = new Set(
+        pays
+          .filter((p) => p.payment_method_id === methodFilter)
+          .map((p) => p.sale_id)
+      );
+      result = result.filter((sa) => saleIdsWithMethod.has(sa.id));
+      pays = pays.filter((p) => saleIdsWithMethod.has(p.sale_id));
+    }
+
+    setSales(result);
+    setPayments(pays);
     setLoading(false);
   }
 
@@ -110,7 +161,8 @@ export default function RelatoriosPage() {
 
   useEffect(() => {
     loadReport();
-  }, [from, to, customerId, status]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [from, to, customerId, status, sellerId, cargaId, methodFilter]);
 
   const custMap = useMemo(() => {
     const map: Record<string, Customer> = {};
@@ -144,41 +196,42 @@ export default function RelatoriosPage() {
     };
   }, [sales, payments]);
 
+  function buildExportRows() {
+    // Se houver linhas selecionadas, exporta apenas elas. Senão, todas.
+    const source =
+      selectedIds.size > 0
+        ? sales.filter((s) => selectedIds.has(s.id))
+        : sales;
+    return source.map((s) => ({
+      "#": s.code,
+      data: fmtDate(s.created_at),
+      cliente: s.customer_id
+        ? custMap[s.customer_id]?.name ?? ""
+        : "Consumidor",
+      quantidade: s.quantity,
+      unitario: Number(s.unit_price).toFixed(2),
+      total: Number(s.total).toFixed(2),
+      pago: Number(s.paid_amount).toFixed(2),
+      saldo: (Number(s.total) - Number(s.paid_amount)).toFixed(2),
+      status: s.status,
+      observacao: (s.notes ?? "").replace(/[\n]/g, " "),
+    }));
+  }
+
   function exportCsv() {
-    const headers = [
-      "data",
-      "cliente",
-      "quantidade",
-      "unitario",
-      "total",
-      "pago",
-      "saldo",
-      "status",
-      "observacao",
-    ];
-    const lines = sales.map((s) => [
-      fmtDate(s.created_at),
-      s.customer_id ? custMap[s.customer_id]?.name ?? "" : "Consumidor",
-      s.quantity,
-      Number(s.unit_price).toFixed(2),
-      Number(s.total).toFixed(2),
-      Number(s.paid_amount).toFixed(2),
-      (Number(s.total) - Number(s.paid_amount)).toFixed(2),
-      s.status,
-      (s.notes ?? "").replace(/[\n;]/g, " "),
-    ]);
-    const csv = [headers, ...lines]
-      .map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(";"))
-      .join("\n");
-    const blob = new Blob(["﻿" + csv], {
-      type: "text/csv;charset=utf-8;",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `vendas_${from}_${to}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const rows = buildExportRows();
+    const suffix = selectedIds.size > 0 ? `_sel${selectedIds.size}` : "";
+    downloadCsv(`vendas_${from}_${to}${suffix}.csv`, rowsToCsv(rows));
+  }
+
+  async function exportXlsx() {
+    const rows = buildExportRows();
+    const suffix = selectedIds.size > 0 ? `_sel${selectedIds.size}` : "";
+    await downloadXlsx(
+      `vendas_${from}_${to}${suffix}.xlsx`,
+      "Vendas",
+      rows
+    );
   }
 
   return (
@@ -190,9 +243,25 @@ export default function RelatoriosPage() {
             Vendas detalhadas com filtros por período, cliente e status.
           </p>
         </div>
-        <button onClick={exportCsv} className="btn-secondary">
-          ⬇ Exportar CSV
-        </button>
+        <div className="flex gap-2 items-center">
+          {selectedIds.size > 0 && (
+            <span className="text-xs text-coco-700 font-medium">
+              {selectedIds.size} selecionada(s)
+              <button
+                onClick={() => setSelectedIds(new Set())}
+                className="ml-2 underline"
+              >
+                limpar
+              </button>
+            </span>
+          )}
+          <button onClick={exportCsv} className="btn-secondary">
+            ⬇ CSV{selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}
+          </button>
+          <button onClick={exportXlsx} className="btn-secondary">
+            ⬇ Excel{selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}
+          </button>
+        </div>
       </header>
 
       <div className="card space-y-3">
@@ -219,52 +288,120 @@ export default function RelatoriosPage() {
           })}
         </div>
         <div className="grid md:grid-cols-4 gap-3">
-        <div>
-          <label className="label">De</label>
-          <input
-            type="date"
-            value={from}
-            onChange={(e) => setFrom(e.target.value)}
-            className="input"
-          />
-        </div>
-        <div>
-          <label className="label">Até</label>
-          <input
-            type="date"
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-            className="input"
-          />
-        </div>
-        <div>
-          <label className="label">Cliente</label>
-          <select
-            value={customerId}
-            onChange={(e) => setCustomerId(e.target.value)}
-            className="input"
-          >
-            <option value="">Todos</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="label">Status</label>
-          <select
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            className="input"
-          >
-            <option value="">Todos</option>
-            <option value="paga">Paga</option>
-            <option value="parcial">Parcial</option>
-            <option value="aberta">Aberta</option>
-          </select>
-        </div>
+          <div>
+            <label className="label">De</label>
+            <input
+              type="date"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+              className="input"
+            />
+          </div>
+          <div>
+            <label className="label">Até</label>
+            <input
+              type="date"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              className="input"
+            />
+          </div>
+          <div>
+            <label className="label">Cliente</label>
+            <select
+              value={customerId}
+              onChange={(e) => setCustomerId(e.target.value)}
+              className="input"
+            >
+              <option value="">Todos</option>
+              {customers.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label">Status</label>
+            <select
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+              className="input"
+            >
+              <option value="">Todos</option>
+              <option value="paga">Paga</option>
+              <option value="parcial">Parcial</option>
+              <option value="aberta">Aberta</option>
+              <option value="cancelada">Cancelada</option>
+            </select>
+          </div>
+          <div>
+            <label className="label">Vendedor</label>
+            <select
+              value={sellerId}
+              onChange={(e) => setSellerId(e.target.value)}
+              className="input"
+            >
+              <option value="">Todos</option>
+              {sellers.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                  {s.active ? "" : " (inativo)"}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label">Carga</label>
+            <select
+              value={cargaId}
+              onChange={(e) => setCargaId(e.target.value)}
+              className="input"
+            >
+              <option value="">Todas</option>
+              {cargas.map((c) => (
+                <option key={c.id} value={c.id}>
+                  #{c.code} · {c.status}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label">Forma de pagamento</label>
+            <select
+              value={methodFilter}
+              onChange={(e) => setMethodFilter(e.target.value)}
+              className="input"
+            >
+              <option value="">Todas</option>
+              {methods.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-end">
+            <button
+              onClick={() => {
+                setCustomerId("");
+                setStatus("");
+                setSellerId("");
+                setCargaId("");
+                setMethodFilter("");
+              }}
+              className="btn-ghost w-full"
+              disabled={
+                !customerId &&
+                !status &&
+                !sellerId &&
+                !cargaId &&
+                !methodFilter
+              }
+            >
+              Limpar filtros
+            </button>
+          </div>
         </div>
       </div>
 
@@ -322,6 +459,16 @@ export default function RelatoriosPage() {
           <table className="table">
             <thead>
               <tr>
+                <th>
+                  <input
+                    type="checkbox"
+                    checked={
+                      sales.length > 0 && selectedIds.size === sales.length
+                    }
+                    onChange={toggleAll}
+                    aria-label="Selecionar todas as vendas"
+                  />
+                </th>
                 <th>#</th>
                 <th>Data</th>
                 <th>Cliente</th>
@@ -336,6 +483,14 @@ export default function RelatoriosPage() {
             <tbody>
               {sales.map((s) => (
                 <tr key={s.id} className={s.status === "cancelada" ? "opacity-60" : ""}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(s.id)}
+                      onChange={() => toggleId(s.id)}
+                      aria-label={`Selecionar venda #${s.code}`}
+                    />
+                  </td>
                   <td className="font-mono font-semibold">#{s.code}</td>
                   <td>{fmtDate(s.created_at)}</td>
                   <td>
@@ -354,8 +509,10 @@ export default function RelatoriosPage() {
                     <Link
                       href={`/recibo/${s.id}`}
                       target="_blank"
+                      rel="noopener noreferrer"
                       className="btn-ghost text-xs px-2"
                       title="Recibo"
+                      aria-label="Abrir recibo"
                     >
                       🧾
                     </Link>

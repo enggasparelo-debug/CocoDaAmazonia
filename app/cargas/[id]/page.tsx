@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { errorMessage } from "@/lib/ui";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
@@ -10,14 +11,42 @@ import type {
   CargaSummary,
   Sale,
   Expense,
+  ExpenseCategory,
   CashMovement,
   Vehicle,
   Route,
   AuditLog,
+  Customer,
+  Membership,
+  PaymentMethod,
+  ProductSettings,
+  Seller,
 } from "@/lib/types";
 import CargaSummaryCards from "@/components/CargaSummaryCards";
 import ConfirmModal from "@/components/ConfirmModal";
+import SaleEditor from "@/components/SaleEditor";
 import { useToast } from "@/components/Toast";
+import { isoToLocal, nowLocalIso } from "@/lib/datetime";
+
+type NewSaleForm = {
+  seller_id: string;
+  customer_id: string;
+  quantity: number;
+  unit_price: number;
+  discount: number;
+  notes: string;
+  created_at_local: string;
+};
+
+const emptyNewSale: NewSaleForm = {
+  seller_id: "",
+  customer_id: "",
+  quantity: 0,
+  unit_price: 0,
+  discount: 0,
+  notes: "",
+  created_at_local: "",
+};
 
 export default function CargaDetailPage() {
   const supabase = createClient();
@@ -40,8 +69,43 @@ export default function CargaDetailPage() {
 
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [routes, setRoutes] = useState<Route[]>([]);
+  const [operators, setOperators] = useState<Membership[]>([]);
+
+  // Aux data pra os modais de venda/despesa
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [sellers, setSellers] = useState<Seller[]>([]);
+  const [methods, setMethods] = useState<PaymentMethod[]>([]);
+  const [categories, setCategories] = useState<ExpenseCategory[]>([]);
+  const [productSettings, setProductSettings] =
+    useState<ProductSettings | null>(null);
+
+  // Editor de venda (clica numa linha)
+  const [editingSale, setEditingSale] = useState<Sale | null>(null);
+
+  // Modal de nova venda
+  const [showNewSale, setShowNewSale] = useState(false);
+  const [newSale, setNewSale] = useState<NewSaleForm>(emptyNewSale);
+  const [savingSale, setSavingSale] = useState(false);
+
+  // Modal de despesa (nova ou edição)
+  const [editingExpense, setEditingExpense] =
+    useState<Partial<Expense> | null>(null);
+  const [expensePaidAtLocal, setExpensePaidAtLocal] =
+    useState<string>(nowLocalIso());
+  const [savingExpense, setSavingExpense] = useState(false);
+
+  // Modal de fechamento (admin pode fechar a carga aqui)
+  const [showClose, setShowClose] = useState(false);
+  const [closeForm, setCloseForm] = useState({
+    remaining: "",
+    declared: "",
+    notes: "",
+  });
+  const [savingClose, setSavingClose] = useState(false);
+
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({
+    operator_id: "",
     vehicle_id: "",
     route_id: "",
     notes: "",
@@ -51,6 +115,26 @@ export default function CargaDetailPage() {
     closing_cash_declared: 0,
   });
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // Conta quantas vezes esta carga foi reaberta (status fechada/conferida
+  // → aberta) varrendo o audit_log já carregado.
+  const reopenCount = useMemo(() => {
+    let n = 0;
+    for (const a of audit) {
+      if (a.op !== "UPDATE") continue;
+      const before = (a.before_data ?? {}) as Record<string, unknown>;
+      const after = (a.after_data ?? {}) as Record<string, unknown>;
+      const oldStatus = String(before.status ?? "");
+      const newStatus = String(after.status ?? "");
+      if (
+        (oldStatus === "fechada" || oldStatus === "conferida") &&
+        newStatus === "aberta"
+      ) {
+        n++;
+      }
+    }
+    return n;
+  }, [audit]);
 
   async function load() {
     const { data: c } = await supabase
@@ -111,17 +195,38 @@ export default function CargaDetailPage() {
     setRoute((r.data as Route | null) ?? null);
     setAudit((a.data as AuditLog[]) ?? []);
 
-    const [vs, rs] = await Promise.all([
+    const [vs, rs, cs, sl, pm, cat, ps, ops] = await Promise.all([
       supabase.from("vehicles").select("*").order("plate"),
       supabase.from("routes").select("*").order("name"),
+      supabase.from("customers").select("*").order("name"),
+      supabase.from("sellers").select("*").order("name"),
+      supabase
+        .from("payment_methods")
+        .select("*")
+        .eq("active", true)
+        .order("name"),
+      supabase
+        .from("expense_categories")
+        .select("*")
+        .order("sort_order")
+        .order("name"),
+      supabase.from("product_settings").select("*").limit(1).maybeSingle(),
+      supabase.from("memberships").select("*").eq("role", "operador"),
     ]);
     setVehicles((vs.data as Vehicle[]) ?? []);
     setRoutes((rs.data as Route[]) ?? []);
+    setCustomers((cs.data as Customer[]) ?? []);
+    setSellers((sl.data as Seller[]) ?? []);
+    setMethods((pm.data as PaymentMethod[]) ?? []);
+    setCategories((cat.data as ExpenseCategory[]) ?? []);
+    setProductSettings((ps.data as ProductSettings | null) ?? null);
+    setOperators((ops.data as Membership[]) ?? []);
   }
 
   function openEdit() {
     if (!carga) return;
     setEditForm({
+      operator_id: carga.operator_id,
       vehicle_id: carga.vehicle_id ?? "",
       route_id: carga.route_id ?? "",
       notes: carga.notes ?? "",
@@ -135,9 +240,14 @@ export default function CargaDetailPage() {
 
   async function saveEdit() {
     if (!carga) return;
+    if (!editForm.operator_id) {
+      toast.error("Selecione um operador.");
+      return;
+    }
     setSaving(true);
     const hasSales = sales.length > 0;
     const updates: Record<string, unknown> = {
+      operator_id: editForm.operator_id,
       vehicle_id: editForm.vehicle_id || null,
       route_id: editForm.route_id || null,
       notes: editForm.notes || null,
@@ -180,6 +290,199 @@ export default function CargaDetailPage() {
     }
     toast.success("Carga apagada.");
     router.push("/cargas");
+  }
+
+  // ---------- Nova venda na carga (admin) ----------------------
+  function openNewSale() {
+    if (!carga) return;
+    const opSeller = sellers.find((s) => s.user_id === carga.operator_id);
+    setNewSale({
+      seller_id: opSeller?.id ?? "",
+      customer_id: "",
+      quantity: 0,
+      unit_price: Number(productSettings?.unit_price ?? 0),
+      discount: 0,
+      notes: "",
+      created_at_local: nowLocalIso(),
+    });
+    setShowNewSale(true);
+  }
+
+  async function saveNewSale() {
+    if (!carga) return;
+    if (!newSale.seller_id) return toast.error("Selecione o vendedor.");
+    if (newSale.quantity <= 0) return toast.error("Quantidade inválida.");
+    if (newSale.unit_price <= 0)
+      return toast.error("Valor unitário inválido.");
+    if (!newSale.created_at_local)
+      return toast.error("Informe a data da venda.");
+    const createdAtIso = new Date(newSale.created_at_local).toISOString();
+    if (new Date(createdAtIso).getTime() > Date.now() + 60_000) {
+      return toast.error("A data da venda não pode ser no futuro.");
+    }
+    const subtotal = newSale.quantity * newSale.unit_price;
+    const total = Math.max(0, +(subtotal - newSale.discount).toFixed(2));
+    setSavingSale(true);
+    try {
+      const { data, error } = await supabase
+        .from("sales")
+        .insert({
+          carga_id: carga.id,
+          seller_id: newSale.seller_id,
+          customer_id: newSale.customer_id || null,
+          quantity: newSale.quantity,
+          unit_price: newSale.unit_price,
+          discount: newSale.discount,
+          total,
+          notes: newSale.notes || null,
+          created_at: createdAtIso,
+        })
+        .select("*")
+        .single();
+      if (error) throw error;
+      toast.success("Venda criada. Lance os pagamentos.");
+      setShowNewSale(false);
+      await load();
+      // Abre o editor pra lançar pagamentos na nova venda.
+      setEditingSale(data as Sale);
+    } catch (e: unknown) {
+      toast.error(errorMessage(e));
+    } finally {
+      setSavingSale(false);
+    }
+  }
+
+  // ---------- Despesa na carga --------------------------------
+  function openNewExpense() {
+    setEditingExpense({
+      description: "",
+      category: "",
+      amount: 0,
+      notes: "",
+      payment_method_id: null,
+    });
+    setExpensePaidAtLocal(nowLocalIso());
+  }
+
+  function openEditExpense(e: Expense) {
+    setEditingExpense(e);
+    setExpensePaidAtLocal(isoToLocal(e.paid_at));
+  }
+
+  async function saveExpense() {
+    if (!carga) return;
+    if (!editingExpense?.description?.trim())
+      return toast.error("Descrição obrigatória.");
+    if (!editingExpense.amount || editingExpense.amount <= 0)
+      return toast.error("Valor inválido.");
+    if (!expensePaidAtLocal) return toast.error("Informe a data da despesa.");
+    const paidAtIso = new Date(expensePaidAtLocal).toISOString();
+    if (new Date(paidAtIso).getTime() > Date.now() + 60_000)
+      return toast.error("A data da despesa não pode ser no futuro.");
+    const payload = {
+      description: editingExpense.description.trim(),
+      category: editingExpense.category || null,
+      amount: editingExpense.amount,
+      payment_method_id: editingExpense.payment_method_id || null,
+      notes: editingExpense.notes || null,
+      paid_at: paidAtIso,
+      carga_id: carga.id,
+    };
+    setSavingExpense(true);
+    const op = editingExpense.id
+      ? supabase.from("expenses").update(payload).eq("id", editingExpense.id)
+      : supabase.from("expenses").insert(payload);
+    const { error } = await op;
+    setSavingExpense(false);
+    if (error) return toast.error(error.message);
+    toast.success("Despesa salva.");
+    setEditingExpense(null);
+    load();
+  }
+
+  async function deleteExpense() {
+    if (!editingExpense?.id) return;
+    setSavingExpense(true);
+    const { error } = await supabase
+      .from("expenses")
+      .delete()
+      .eq("id", editingExpense.id);
+    setSavingExpense(false);
+    if (error) return toast.error(error.message);
+    toast.success("Despesa apagada.");
+    setEditingExpense(null);
+    load();
+  }
+
+  // ---------- Fechar carga (admin direto na tela) -------------
+  function openClose() {
+    setCloseForm({ remaining: "", declared: "", notes: "" });
+    setShowClose(true);
+  }
+
+  async function fecharCarga() {
+    if (!carga || !summary) return;
+    if (closeForm.remaining === "")
+      return toast.error("Informe a sobra de cocos.");
+    if (closeForm.declared === "")
+      return toast.error("Informe o dinheiro em mão.");
+    const remaining = Math.max(
+      0,
+      parseInt(closeForm.remaining || "0", 10) || 0
+    );
+    const declared =
+      parseFloat((closeForm.declared || "0").replace(",", ".")) || 0;
+    setSavingClose(true);
+    // Optimistic lock: só atualiza se lock_version não mudou desde o load.
+    let q = supabase
+      .from("cargas")
+      .update({
+        status: "fechada",
+        closing_cocos_remaining: remaining,
+        closing_cash_declared: declared,
+        closing_notes: closeForm.notes.trim() || null,
+      })
+      .eq("id", carga.id);
+    if (carga.lock_version !== undefined) {
+      q = q.eq("lock_version", carga.lock_version);
+    }
+    const { data, error } = await q.select("id");
+    setSavingClose(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    if (!data || data.length === 0) {
+      toast.error(
+        "Outra pessoa atualizou a carga ao mesmo tempo. Recarregando…"
+      );
+      load();
+      return;
+    }
+    toast.success("Carga fechada.");
+    setShowClose(false);
+    load();
+  }
+
+  async function resyncInventory() {
+    if (!carga) return;
+    if (
+      !confirm(
+        `Recalcular movimentos de estoque (carga_saida / retorno / perda) com base no estado atual desta carga?`
+      )
+    )
+      return;
+    setSaving(true);
+    const { error } = await supabase.rpc("resync_carga_inventory", {
+      p_carga_id: carga.id,
+    });
+    setSaving(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Movimentos recalculados.");
+    load();
   }
 
   useEffect(() => {
@@ -252,6 +555,14 @@ export default function CargaDetailPage() {
             >
               {carga.status}
             </span>
+            {reopenCount > 0 && (
+              <span
+                className="badge bg-amber-100 text-amber-800 ml-2"
+                title="Esta carga já foi reaberta após o fechamento. Verifique a auditoria."
+              >
+                ⚠ Reaberta {reopenCount}x
+              </span>
+            )}
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
@@ -294,6 +605,19 @@ export default function CargaDetailPage() {
               </button>
             </>
           )}
+          {carga.status === "aberta" && (
+            <button onClick={openClose} className="btn-primary">
+              🔒 Fechar carga
+            </button>
+          )}
+          <button
+            onClick={resyncInventory}
+            className="btn-ghost"
+            title="Refaz carga_saida/retorno/perda com base no estado atual"
+            disabled={saving}
+          >
+            🔄 Recalcular movimentos
+          </button>
           <button onClick={openEdit} className="btn-ghost">
             ✏️ Editar
           </button>
@@ -310,7 +634,14 @@ export default function CargaDetailPage() {
       <div className="card text-sm space-y-1">
         <div>
           <strong>Operador:</strong>{" "}
-          <span className="font-mono text-xs">{carga.operator_id}</span>
+          {(() => {
+            const sl = sellers.find((s) => s.user_id === carga.operator_id);
+            return sl ? (
+              <span>{sl.name}</span>
+            ) : (
+              <span className="font-mono text-xs">{carga.operator_id}</span>
+            );
+          })()}
         </div>
         <div>
           <strong>Veículo:</strong> {vehicle?.plate ?? "—"}{" "}
@@ -337,51 +668,117 @@ export default function CargaDetailPage() {
       />
 
       <div className="card">
-        <h2 className="font-bold text-coco-900 mb-2">
-          Vendas ({sales.length})
-        </h2>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="font-bold text-coco-900">
+            Vendas ({sales.length})
+          </h2>
+          {carga.status !== "conferida" && (
+            <div className="flex gap-2">
+              <Link
+                href={`/vendas/importar?cargaId=${carga.id}`}
+                className="btn-secondary text-sm"
+              >
+                📥 Importar Excel
+              </Link>
+              <button onClick={openNewSale} className="btn-secondary text-sm">
+                + Nova venda
+              </button>
+            </div>
+          )}
+        </div>
         {sales.length === 0 ? (
           <p className="text-coco-600 text-sm">Sem vendas.</p>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Data</th>
-                <th>Qtd</th>
-                <th>Total</th>
-                <th>Pago</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sales.map((s) => (
-                <tr
-                  key={s.id}
-                  className={s.canceled_at ? "opacity-50 line-through" : ""}
-                >
-                  <td>{fmtDate(s.created_at)}</td>
-                  <td>{s.quantity}</td>
-                  <td>{brl(Number(s.total))}</td>
-                  <td>{brl(Number(s.paid_amount))}</td>
-                  <td>{s.status}</td>
+          <div className="overflow-x-auto">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Data</th>
+                  <th>Cliente</th>
+                  <th>Vendedor</th>
+                  <th>Qtd</th>
+                  <th>Total</th>
+                  <th>Pago</th>
+                  <th>Em aberto</th>
+                  <th>Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {sales.map((s) => {
+                  const cust = s.customer_id
+                    ? customers.find((c) => c.id === s.customer_id)?.name ??
+                      "—"
+                    : "Consumidor";
+                  const sl = s.seller_id
+                    ? sellers.find((x) => x.id === s.seller_id)?.name ?? "—"
+                    : "—";
+                  const open = s.canceled_at
+                    ? 0
+                    : Math.max(
+                        0,
+                        Number(s.total) - Number(s.paid_amount)
+                      );
+                  return (
+                    <tr
+                      key={s.id}
+                      onClick={() => setEditingSale(s)}
+                      className={`cursor-pointer hover:bg-coco-50 ${
+                        s.canceled_at ? "opacity-50 line-through" : ""
+                      }`}
+                    >
+                      <td className="text-coco-500">#{s.code}</td>
+                      <td>{fmtDate(s.created_at)}</td>
+                      <td>{cust}</td>
+                      <td>{sl}</td>
+                      <td>{s.quantity}</td>
+                      <td>{brl(Number(s.total))}</td>
+                      <td>{brl(Number(s.paid_amount))}</td>
+                      <td
+                        className={
+                          open > 0 ? "text-amber-700 font-semibold" : ""
+                        }
+                      >
+                        {brl(open)}
+                      </td>
+                      <td>{s.status}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
       <div className="card">
-        <h2 className="font-bold text-coco-900 mb-2">
-          Despesas ({expenses.length})
-        </h2>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="font-bold text-coco-900">
+            Despesas ({expenses.length})
+          </h2>
+          {carga.status !== "conferida" && (
+            <button
+              onClick={openNewExpense}
+              className="btn-secondary text-sm"
+            >
+              + Nova despesa
+            </button>
+          )}
+        </div>
         {expenses.length === 0 ? (
           <p className="text-coco-600 text-sm">Sem despesas.</p>
         ) : (
           expenses.map((e) => (
             <div
               key={e.id}
-              className="flex justify-between text-sm py-1 border-b border-coco-100"
+              onClick={() =>
+                carga.status !== "conferida" && openEditExpense(e)
+              }
+              className={`flex justify-between text-sm py-1 border-b border-coco-100 ${
+                carga.status !== "conferida"
+                  ? "cursor-pointer hover:bg-coco-50"
+                  : ""
+              }`}
             >
               <span>
                 {e.category ?? "—"} · {e.description}
@@ -454,6 +851,48 @@ export default function CargaDetailPage() {
               </button>
             </div>
             <div className="space-y-3">
+              <div>
+                <label className="label">Operador *</label>
+                <select
+                  className="input"
+                  value={editForm.operator_id}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, operator_id: e.target.value })
+                  }
+                >
+                  {/* Mantém o operador atual selecionável mesmo se ele não
+                      estiver mais na lista de memberships ativas. */}
+                  {!operators.some(
+                    (o) => o.user_id === editForm.operator_id
+                  ) &&
+                    editForm.operator_id && (
+                      <option value={editForm.operator_id}>
+                        {(() => {
+                          const sl = sellers.find(
+                            (s) => s.user_id === editForm.operator_id
+                          );
+                          return sl
+                            ? `${sl.name} (atual)`
+                            : `${editForm.operator_id.slice(0, 8)}… (atual)`;
+                        })()}
+                      </option>
+                    )}
+                  {operators.map((o) => {
+                    const sl = sellers.find((s) => s.user_id === o.user_id);
+                    return (
+                      <option key={o.user_id} value={o.user_id}>
+                        {sl ? sl.name : `${o.user_id.slice(0, 8)}…`} (operador)
+                      </option>
+                    );
+                  })}
+                </select>
+                {carga.status === "aberta" && (
+                  <p className="text-xs text-amber-700 mt-1">
+                    Trocar operador numa carga aberta falha se o novo já tiver
+                    outra carga aberta.
+                  </p>
+                )}
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="label">Veículo</label>
@@ -627,6 +1066,463 @@ export default function CargaDetailPage() {
           onConfirm={() => sales.length === 0 && apagarCarga()}
         />
       )}
+
+      {editingSale && (
+        <SaleEditor
+          sale={editingSale}
+          customers={customers}
+          onClose={() => setEditingSale(null)}
+          onSaved={() => {
+            setEditingSale(null);
+            load();
+          }}
+        />
+      )}
+
+      {showNewSale && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 my-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-2xl font-bold text-coco-900">
+                Nova venda na carga #{carga.code}
+              </h2>
+              <button
+                onClick={() => setShowNewSale(false)}
+                className="btn-ghost"
+              >
+                Fechar
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Vendedor *</label>
+                  <select
+                    className="input"
+                    value={newSale.seller_id}
+                    onChange={(e) =>
+                      setNewSale({ ...newSale, seller_id: e.target.value })
+                    }
+                  >
+                    <option value="">— Selecione —</option>
+                    {sellers
+                      .filter((s) => s.active || s.id === newSale.seller_id)
+                      .map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                          {s.active ? "" : " (inativo)"}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Data *</label>
+                  <input
+                    type="datetime-local"
+                    className="input"
+                    value={newSale.created_at_local}
+                    onChange={(e) =>
+                      setNewSale({
+                        ...newSale,
+                        created_at_local: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="label">Cliente</label>
+                <select
+                  className="input"
+                  value={newSale.customer_id}
+                  onChange={(e) =>
+                    setNewSale({ ...newSale, customer_id: e.target.value })
+                  }
+                >
+                  <option value="">— Consumidor —</option>
+                  {customers.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="label">Quantidade *</label>
+                  <input
+                    type="number"
+                    min={1}
+                    className="input"
+                    value={newSale.quantity || ""}
+                    onChange={(e) =>
+                      setNewSale({
+                        ...newSale,
+                        quantity: parseInt(e.target.value || "0", 10),
+                      })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="label">Unitário *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    className="input"
+                    value={newSale.unit_price || ""}
+                    onChange={(e) =>
+                      setNewSale({
+                        ...newSale,
+                        unit_price: parseFloat(e.target.value || "0"),
+                      })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="label">Desconto</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    className="input"
+                    value={newSale.discount || ""}
+                    onChange={(e) =>
+                      setNewSale({
+                        ...newSale,
+                        discount: parseFloat(e.target.value || "0"),
+                      })
+                    }
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="label">Observação</label>
+                <input
+                  className="input"
+                  value={newSale.notes}
+                  onChange={(e) =>
+                    setNewSale({ ...newSale, notes: e.target.value })
+                  }
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div className="card !p-2">
+                  <div className="text-coco-700 text-xs">Subtotal</div>
+                  <div className="font-bold">
+                    {brl(newSale.quantity * newSale.unit_price)}
+                  </div>
+                </div>
+                <div className="card !p-2 bg-coco-600 text-white border-coco-600">
+                  <div className="text-coco-100 text-xs">Total</div>
+                  <div className="font-bold">
+                    {brl(
+                      Math.max(
+                        0,
+                        newSale.quantity * newSale.unit_price -
+                          newSale.discount
+                      )
+                    )}
+                  </div>
+                </div>
+              </div>
+              <p className="text-xs text-coco-600">
+                A venda é criada em aberto. Os pagamentos podem ser lançados em
+                seguida no editor.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button
+                onClick={() => setShowNewSale(false)}
+                className="btn-ghost"
+                disabled={savingSale}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={saveNewSale}
+                disabled={savingSale}
+                className="btn-primary"
+              >
+                {savingSale ? "…" : "Criar venda"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editingExpense && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 my-6">
+            <h2 className="text-xl font-bold mb-4">
+              {editingExpense.id ? "Editar despesa" : "Nova despesa"} · Carga #
+              {carga.code}
+            </h2>
+            <div className="space-y-3">
+              <div>
+                <label className="label">Descrição *</label>
+                <input
+                  className="input"
+                  value={editingExpense.description ?? ""}
+                  onChange={(ev) =>
+                    setEditingExpense({
+                      ...editingExpense,
+                      description: ev.target.value,
+                    })
+                  }
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Valor (R$) *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    className="input"
+                    value={editingExpense.amount ?? 0}
+                    onChange={(ev) =>
+                      setEditingExpense({
+                        ...editingExpense,
+                        amount: parseFloat(ev.target.value || "0"),
+                      })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="label">Categoria</label>
+                  <select
+                    className="input"
+                    value={editingExpense.category ?? ""}
+                    onChange={(ev) =>
+                      setEditingExpense({
+                        ...editingExpense,
+                        category: ev.target.value,
+                      })
+                    }
+                  >
+                    <option value="">—</option>
+                    {categories
+                      .filter((c) => c.active)
+                      .map((c) => (
+                        <option key={c.id} value={c.name}>
+                          {c.name}
+                        </option>
+                      ))}
+                    {editingExpense.category &&
+                      !categories.some(
+                        (c) =>
+                          c.active && c.name === editingExpense.category
+                      ) && (
+                        <option value={editingExpense.category}>
+                          {editingExpense.category} (inativa)
+                        </option>
+                      )}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Data *</label>
+                  <input
+                    type="datetime-local"
+                    className="input"
+                    value={expensePaidAtLocal}
+                    onChange={(ev) => setExpensePaidAtLocal(ev.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="label">Pago em</label>
+                  <select
+                    className="input"
+                    value={editingExpense.payment_method_id ?? ""}
+                    onChange={(ev) =>
+                      setEditingExpense({
+                        ...editingExpense,
+                        payment_method_id: ev.target.value || null,
+                      })
+                    }
+                  >
+                    <option value="">—</option>
+                    {methods.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="label">Observação</label>
+                <textarea
+                  className="input"
+                  rows={2}
+                  value={editingExpense.notes ?? ""}
+                  onChange={(ev) =>
+                    setEditingExpense({
+                      ...editingExpense,
+                      notes: ev.target.value,
+                    })
+                  }
+                />
+              </div>
+            </div>
+            <div className="flex justify-between gap-2 mt-5">
+              {editingExpense.id ? (
+                <button
+                  onClick={deleteExpense}
+                  className="btn-danger"
+                  disabled={savingExpense}
+                >
+                  Apagar
+                </button>
+              ) : (
+                <span />
+              )}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setEditingExpense(null)}
+                  className="btn-ghost"
+                  disabled={savingExpense}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={saveExpense}
+                  className="btn-primary"
+                  disabled={savingExpense}
+                >
+                  {savingExpense ? "…" : "Salvar"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showClose && summary && (() => {
+        const remainingNum = Math.max(
+          0,
+          parseInt(closeForm.remaining || "0", 10) || 0
+        );
+        const declaredNum =
+          parseFloat((closeForm.declared || "0").replace(",", ".")) || 0;
+        const lossPreview = Math.max(
+          0,
+          summary.opening_cocos - summary.cocos_vendidos - remainingNum
+        );
+        const cashDiff = declaredNum - Number(summary.expected_cash);
+        return (
+          <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4 overflow-y-auto">
+            <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 my-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-2xl font-bold text-coco-900">
+                  Fechar carga #{carga.code}
+                </h2>
+                <button
+                  onClick={() => setShowClose(false)}
+                  className="btn-ghost"
+                  disabled={savingClose}
+                >
+                  Fechar
+                </button>
+              </div>
+              <div className="space-y-4">
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="label">Sobra de cocos</label>
+                    <input
+                      className="input text-2xl font-bold text-center"
+                      inputMode="numeric"
+                      value={closeForm.remaining}
+                      onChange={(ev) =>
+                        setCloseForm({
+                          ...closeForm,
+                          remaining: ev.target.value.replace(/[^0-9]/g, ""),
+                        })
+                      }
+                      placeholder="0"
+                    />
+                    <p className="text-xs text-coco-600 mt-1">
+                      Saída: {summary.opening_cocos} · Vendidos:{" "}
+                      {summary.cocos_vendidos}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="label">Dinheiro em mão (R$)</label>
+                    <input
+                      className="input text-2xl font-bold text-center"
+                      inputMode="decimal"
+                      value={closeForm.declared}
+                      onChange={(ev) =>
+                        setCloseForm({
+                          ...closeForm,
+                          declared: ev.target.value.replace(/[^0-9.,]/g, ""),
+                        })
+                      }
+                      placeholder="0,00"
+                    />
+                    <p className="text-xs text-coco-600 mt-1">
+                      Esperado: {brl(Number(summary.expected_cash))}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="card !p-3 bg-amber-50 border-amber-200">
+                    <div className="text-xs">Perda calculada</div>
+                    <div className="text-xl font-bold text-amber-800">
+                      {lossPreview} cocos
+                    </div>
+                  </div>
+                  <div
+                    className={`card !p-3 ${
+                      Math.abs(cashDiff) < 0.01
+                        ? "bg-green-50 border-green-200"
+                        : cashDiff > 0
+                        ? "bg-amber-50 border-amber-200"
+                        : "bg-red-50 border-red-200"
+                    }`}
+                  >
+                    <div className="text-xs">Diferença caixa</div>
+                    <div className="text-xl font-bold">{brl(cashDiff)}</div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="label">Observações de fechamento</label>
+                  <textarea
+                    className="input"
+                    rows={2}
+                    value={closeForm.notes}
+                    onChange={(ev) =>
+                      setCloseForm({ ...closeForm, notes: ev.target.value })
+                    }
+                    placeholder="Ex.: cocos quebraram no caminho…"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 mt-5">
+                <button
+                  onClick={() => setShowClose(false)}
+                  className="btn-ghost"
+                  disabled={savingClose}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={fecharCarga}
+                  disabled={
+                    savingClose ||
+                    closeForm.remaining === "" ||
+                    closeForm.declared === ""
+                  }
+                  className="btn-primary"
+                >
+                  {savingClose ? "Fechando…" : "Fechar carga →"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {showReopen && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">

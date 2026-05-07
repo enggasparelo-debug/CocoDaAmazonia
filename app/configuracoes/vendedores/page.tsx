@@ -5,11 +5,14 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import type { Seller, Membership } from "@/lib/types";
 import { useToast } from "@/components/Toast";
+import { SkeletonRows } from "@/components/Skeleton";
 
 const empty: Partial<Seller> = {
   name: "",
   user_id: null,
   active: true,
+  commission_pct: 0,
+  commission_fixed: 0,
 };
 
 export default function VendedoresPage() {
@@ -45,6 +48,8 @@ export default function VendedoresPage() {
       name: editing.name!.trim(),
       user_id: editing.user_id || null,
       active: editing.active ?? true,
+      commission_pct: Number(editing.commission_pct ?? 0),
+      commission_fixed: Number(editing.commission_fixed ?? 0),
     };
     const op = editing.id
       ? supabase.from("sellers").update(payload).eq("id", editing.id)
@@ -106,7 +111,7 @@ export default function VendedoresPage() {
 
       <div className="card">
         {loading ? (
-          <p className="text-coco-600">Carregando…</p>
+          <SkeletonRows count={4} />
         ) : rows.length === 0 ? (
           <p className="text-coco-600">Nenhum vendedor cadastrado.</p>
         ) : (
@@ -213,6 +218,45 @@ export default function VendedoresPage() {
                   é só um nome pra atribuição manual.
                 </p>
               </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Comissão %</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="99.99"
+                    className="input"
+                    value={editing.commission_pct ?? 0}
+                    onChange={(e) =>
+                      setEditing({
+                        ...editing,
+                        commission_pct: parseFloat(e.target.value || "0"),
+                      })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="label">Comissão fixa (R$/período)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    className="input"
+                    value={editing.commission_fixed ?? 0}
+                    onChange={(e) =>
+                      setEditing({
+                        ...editing,
+                        commission_fixed: parseFloat(e.target.value || "0"),
+                      })
+                    }
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-coco-600">
+                Comissão sobre o faturado (vendas não canceladas).
+                Aparece como linha "Comissão" no scorecard de Operadores.
+              </p>
               <label className="flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"

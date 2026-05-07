@@ -76,7 +76,10 @@ export default function CaixaPage() {
       .eq("payment_method_id", dinheiro.id)
       .gte("paid_at", since);
     return (
-      data?.reduce((acc, r: any) => acc + Number(r.amount), 0) ?? 0
+      (data as { amount: number | string }[] | null)?.reduce(
+        (acc, r) => acc + Number(r.amount),
+        0
+      ) ?? 0
     );
   }
 

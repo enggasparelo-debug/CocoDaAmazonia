@@ -48,6 +48,28 @@ export type PaymentMethod = {
   is_credit: boolean;
   active: boolean;
   created_at: string;
+  fee_percent?: number; // ex.: 3.5 = 3.5% de taxa
+  fee_fixed?: number; // R$ por transação
+};
+
+export type ProductPriceHistory = {
+  id: number;
+  tenant_id: string;
+  unit_price: number;
+  started_at: string;
+  changed_by: string | null;
+};
+
+export type SaleReturn = {
+  id: string;
+  tenant_id: string;
+  sale_id: string;
+  quantity: number;
+  amount: number;
+  reason: string | null;
+  returned_at: string;
+  returned_by: string | null;
+  inventory_movement_id: string | null;
 };
 
 export type SaleStatus = "aberta" | "parcial" | "paga" | "cancelada";
@@ -80,6 +102,7 @@ export type SalePayment = {
   amount: number;
   paid_at: string;
   notes: string | null;
+  attachment_url?: string | null;
 };
 
 export type CustomerBalance = {
@@ -186,6 +209,7 @@ export type Carga = {
   conferred_at: string | null;
   conferred_by: string | null;
   notes: string | null;
+  lock_version?: number;
 };
 
 export type FiadoPromissoria = {
@@ -209,6 +233,8 @@ export type Seller = {
   name: string;
   active: boolean;
   created_at: string;
+  commission_pct?: number;
+  commission_fixed?: number;
 };
 
 export type ExpenseCategory = {

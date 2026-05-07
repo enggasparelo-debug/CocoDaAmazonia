@@ -27,6 +27,7 @@ const items: NavItem[] = [
   { href: "/despesas", label: "Despesas", icon: "💸", roles: ["admin"] },
   { href: "/estoque", label: "Estoque", icon: "📦", roles: ["admin"] },
   { href: "/financeiro", label: "Financeiro", icon: "💰", roles: ["admin"] },
+  { href: "/operadores", label: "Operadores", icon: "🧑‍💼", roles: ["admin"] },
   { href: "/relatorios", label: "Relatórios", icon: "📈", roles: ["admin"] },
   { href: "/configuracoes", label: "Configurações", icon: "⚙️", roles: ["admin"] },
   { href: "/auditoria", label: "Auditoria", icon: "🔍", roles: ["admin"] },
@@ -72,7 +73,13 @@ export default function MobileNav() {
           >
             <div className="flex items-center justify-between mb-4">
               <div className="text-xl font-bold">🥥 Coco</div>
-              <button onClick={() => setOpen(false)} className="text-2xl">×</button>
+              <button
+                onClick={() => setOpen(false)}
+                className="text-2xl min-h-[44px] min-w-[44px]"
+                aria-label="Fechar menu"
+              >
+                ×
+              </button>
             </div>
             <nav className="space-y-1 flex-1">
               {visible.map((it) => {

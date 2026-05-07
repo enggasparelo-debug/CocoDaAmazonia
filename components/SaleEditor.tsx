@@ -1,30 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { errorMessage } from "@/lib/ui";
 import { createClient } from "@/lib/supabase/client";
 import { brl, fmtDate } from "@/lib/format";
+import { isoToLocal, nowLocalIso } from "@/lib/datetime";
 import type {
   Customer,
   PaymentMethod,
   Sale,
   SalePayment,
+  SaleReturn,
   Seller,
 } from "@/lib/types";
 import { useToast } from "./Toast";
 import { useTenant } from "@/lib/useTenant";
 import PaymentEditor from "./PaymentEditor";
-
-function nowLocalIso(): string {
-  const d = new Date();
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 16);
-}
-
-function isoToLocal(iso: string): string {
-  const d = new Date(iso);
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 16);
-}
 
 export default function SaleEditor({
   sale,
@@ -56,6 +47,12 @@ export default function SaleEditor({
   const [sellers, setSellers] = useState<Seller[]>([]);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
   const [payments, setPayments] = useState<SalePayment[]>([]);
+  const [returns, setReturns] = useState<SaleReturn[]>([]);
+  const [showRefund, setShowRefund] = useState(false);
+  const [refundQty, setRefundQty] = useState(0);
+  const [refundReason, setRefundReason] = useState("");
+  const [refundError, setRefundError] = useState<string | null>(null);
+  const [refundSaving, setRefundSaving] = useState(false);
   const [editingPayment, setEditingPayment] = useState<SalePayment | null>(
     null
   );
@@ -97,18 +94,26 @@ export default function SaleEditor({
       });
   }, [supabase]);
 
-  async function loadPayments() {
+  const loadPayments = useCallback(async () => {
     const { data } = await supabase
       .from("sale_payments")
       .select("*")
       .eq("sale_id", sale.id)
       .order("paid_at", { ascending: false });
     setPayments((data as SalePayment[]) ?? []);
-  }
+  }, [sale.id, supabase]);
+  const loadReturns = useCallback(async () => {
+    const { data } = await supabase
+      .from("sale_returns")
+      .select("*")
+      .eq("sale_id", sale.id)
+      .order("returned_at", { ascending: false });
+    setReturns((data as SaleReturn[]) ?? []);
+  }, [sale.id, supabase]);
   useEffect(() => {
     loadPayments();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sale.id]);
+    loadReturns();
+  }, [loadPayments, loadReturns]);
 
   async function addPayment() {
     setPayErr(null);
@@ -166,6 +171,37 @@ export default function SaleEditor({
   const lockedForOperator =
     isCargaConferida || (!isAdmin && outsideWindow);
 
+  const totalReturnedQty = returns.reduce((s, r) => s + r.quantity, 0);
+  const totalReturnedAmt = returns.reduce(
+    (s, r) => s + Number(r.amount ?? 0),
+    0
+  );
+  const remainingQty = sale.quantity - totalReturnedQty;
+
+  async function confirmRefund() {
+    setRefundError(null);
+    if (refundQty <= 0)
+      return setRefundError("Quantidade deve ser maior que zero.");
+    if (refundQty > remainingQty)
+      return setRefundError(
+        `Devolução excede o saldo (${remainingQty} disponíveis).`
+      );
+    setRefundSaving(true);
+    const { error } = await supabase.rpc("refund_sale", {
+      p_sale_id: sale.id,
+      p_quantity: refundQty,
+      p_reason: refundReason.trim() || null,
+    });
+    setRefundSaving(false);
+    if (error) return setRefundError(error.message);
+    toast.success("Devolução registrada.");
+    setShowRefund(false);
+    setRefundQty(0);
+    setRefundReason("");
+    await loadReturns();
+    onSaved();
+  }
+
   async function save() {
     if (isCargaConferida) {
       return toast.error(
@@ -211,8 +247,8 @@ export default function SaleEditor({
       await supabase.rpc("refresh_sale_status", { p_sale_id: sale.id });
       toast.success("Venda atualizada.");
       onSaved();
-    } catch (e: any) {
-      toast.error(e.message ?? String(e));
+    } catch (e: unknown) {
+      toast.error(errorMessage(e));
     } finally {
       setSaving(false);
     }
@@ -237,8 +273,8 @@ export default function SaleEditor({
       await supabase.rpc("refresh_sale_status", { p_sale_id: sale.id });
       toast.success("Venda cancelada.");
       onSaved();
-    } catch (e: any) {
-      toast.error(e.message ?? String(e));
+    } catch (e: unknown) {
+      toast.error(errorMessage(e));
     } finally {
       setSaving(false);
       setConfirmCancel(false);
@@ -256,8 +292,8 @@ export default function SaleEditor({
       await supabase.rpc("refresh_sale_status", { p_sale_id: sale.id });
       toast.success("Cancelamento revertido.");
       onSaved();
-    } catch (e: any) {
-      toast.error(e.message ?? String(e));
+    } catch (e: unknown) {
+      toast.error(errorMessage(e));
     } finally {
       setSaving(false);
     }
@@ -445,6 +481,17 @@ export default function SaleEditor({
                             {p.notes}
                           </span>
                         )}
+                        {p.attachment_url && (
+                          <a
+                            href={p.attachment_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-coco-700 underline text-xs ml-2"
+                            title="Comprovante anexado"
+                          >
+                            📎
+                          </a>
+                        )}
                       </div>
                       <div className="flex items-center gap-1">
                         <strong className="text-green-700">
@@ -454,6 +501,7 @@ export default function SaleEditor({
                           onClick={() => setEditingPayment(p)}
                           className="btn-ghost text-xs px-1.5"
                           title="Editar"
+                          aria-label="Editar pagamento"
                         >
                           ✏️
                         </button>
@@ -461,6 +509,7 @@ export default function SaleEditor({
                           onClick={() => deletePayment(p)}
                           className="btn-ghost text-xs px-1.5 text-red-700"
                           title="Apagar"
+                          aria-label="Apagar pagamento"
                         >
                           🗑
                         </button>
@@ -469,6 +518,65 @@ export default function SaleEditor({
                   );
                 })}
               </div>
+            )}
+          </div>
+        )}
+
+        {!isCanceled && isAdmin && (
+          <div className="mt-4 border border-coco-100 rounded-xl p-3">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="font-bold text-coco-900 text-sm">
+                Devoluções ({returns.length})
+              </h3>
+              {remainingQty > 0 && !lockedForOperator && (
+                <button
+                  onClick={() => {
+                    setRefundQty(0);
+                    setRefundReason("");
+                    setRefundError(null);
+                    setShowRefund(true);
+                  }}
+                  className="btn-secondary text-xs py-1"
+                >
+                  + Devolver
+                </button>
+              )}
+            </div>
+            {returns.length === 0 ? (
+              <p className="text-xs text-coco-600">
+                Nenhuma devolução. Saldo da venda: {sale.quantity} cocos.
+              </p>
+            ) : (
+              <>
+                <div className="space-y-1">
+                  {returns.map((r) => (
+                    <div
+                      key={r.id}
+                      className="flex items-center justify-between text-sm border-b border-coco-50 py-1"
+                    >
+                      <span>
+                        <span className="text-coco-700">
+                          {fmtDate(r.returned_at)} · {r.quantity} cocos
+                        </span>
+                        {r.reason && (
+                          <span className="text-coco-500 text-xs ml-2">
+                            {r.reason}
+                          </span>
+                        )}
+                      </span>
+                      <strong className="text-amber-700">
+                        {brl(Number(r.amount))}
+                      </strong>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-coco-600 mt-2">
+                  Total devolvido: {totalReturnedQty} cocos ({brl(totalReturnedAmt)}).
+                  Restante na venda: <strong>{remainingQty}</strong> cocos.
+                  Cocos voltam pro estoque automaticamente; devolução de
+                  dinheiro ao cliente é manual via /caixa.
+                </p>
+              </>
             )}
           </div>
         )}
@@ -602,6 +710,66 @@ export default function SaleEditor({
               onSaved();
             }}
           />
+        )}
+
+        {showRefund && (
+          <div className="fixed inset-0 z-[90] bg-black/50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl p-6 max-w-md w-full">
+              <h3 className="font-bold text-lg mb-2">Devolver cocos</h3>
+              <p className="text-sm text-coco-700 mb-3">
+                Saldo disponível: <strong>{remainingQty}</strong> cocos.
+              </p>
+              <div className="space-y-3">
+                <div>
+                  <label className="label">Quantidade a devolver</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={remainingQty}
+                    className="input text-2xl font-bold text-center"
+                    value={refundQty || ""}
+                    onChange={(e) =>
+                      setRefundQty(parseInt(e.target.value || "0", 10) || 0)
+                    }
+                    autoFocus
+                  />
+                  {refundQty > 0 && (
+                    <p className="text-xs text-coco-600 mt-1">
+                      Valor proporcional: {brl(refundQty * Number(sale.unit_price))}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <label className="label">Motivo (opcional)</label>
+                  <input
+                    className="input"
+                    value={refundReason}
+                    onChange={(e) => setRefundReason(e.target.value)}
+                    placeholder="Ex.: cocos quebrados, cliente não recebeu…"
+                  />
+                </div>
+              </div>
+              {refundError && (
+                <p className="text-red-700 text-sm mt-3">{refundError}</p>
+              )}
+              <div className="flex justify-end gap-2 mt-5">
+                <button
+                  onClick={() => setShowRefund(false)}
+                  className="btn-ghost"
+                  disabled={refundSaving}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={confirmRefund}
+                  disabled={refundSaving || refundQty <= 0}
+                  className="btn-primary"
+                >
+                  {refundSaving ? "…" : "Confirmar devolução"}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {confirmCancel && (

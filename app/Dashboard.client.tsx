@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { errorMessage } from "@/lib/ui";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { brl, fmtDate, fmtPct, pctChange } from "@/lib/format";
@@ -10,11 +11,13 @@ import {
   bucketByDay,
   dashboardRange,
   hoursSince,
-  last14Days,
+  lastNDays,
   previousRange,
   rangeBoundsIso,
   topBy,
+  ymdToDate,
 } from "@/lib/dashboard";
+import { fmtYmd } from "@/lib/dateRanges";
 import type {
   Customer,
   PaymentMethod,
@@ -30,6 +33,10 @@ import DashboardAlerts, {
 } from "@/components/DashboardAlerts";
 import TopList from "@/components/TopList";
 import SaleEditor from "@/components/SaleEditor";
+import EmptyOnboarding, {
+  type OnboardingStep,
+} from "@/components/EmptyOnboarding";
+import { useTenant } from "@/lib/useTenant";
 
 type SaleLite = Pick<
   Sale,
@@ -51,6 +58,16 @@ type PaymentLite = {
   payment_method_id: string | null;
 };
 
+type ChartSale = {
+  id: string;
+  code: number;
+  created_at: string;
+  total: number;
+  quantity: number;
+  customer_id: string | null;
+  seller_id: string | null;
+};
+
 type State = {
   // período corrente
   curSales: SaleLite[];
@@ -60,8 +77,8 @@ type State = {
   prevSalesTotal: number;
   prevPaymentsTotal: number;
   prevExpenses: number;
-  // séries fixas
-  bar14: BarPoint[];
+  // série pra gráfico (30d, depois filtrada/recortada no cliente)
+  chart30Sales: ChartSale[];
   recent: Sale[];
   // estado fixo
   receivable: number;
@@ -81,7 +98,7 @@ const EMPTY: State = {
   prevSalesTotal: 0,
   prevPaymentsTotal: 0,
   prevExpenses: 0,
-  bar14: [],
+  chart30Sales: [],
   recent: [],
   receivable: 0,
   oldestOpenIso: null,
@@ -93,8 +110,14 @@ const EMPTY: State = {
   oldestCargaOpenedAt: null,
 };
 
+type ChartDays = 7 | 14 | 30;
+const CHART_DAY_OPTIONS: ChartDays[] = [7, 14, 30];
+
+const WEEKDAY_LABELS = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
+
 export default function DashboardClient() {
   const supabase = createClient();
+  const { tenant, isAdmin } = useTenant();
   const [preset, setPreset] = useState<DashboardPreset>("hoje");
   const [state, setState] = useState<State>(EMPTY);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -103,6 +126,16 @@ export default function DashboardClient() {
   const [editing, setEditing] = useState<Sale | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Contagens pra onboarding (só carrega 1× por tenant)
+  const [counts, setCounts] = useState<{
+    vehicles: number;
+    sellers: number;
+    methods: number;
+    cargas: number;
+  } | null>(null);
+  // Filtros do gráfico (não mexe nos KPIs / top lists)
+  const [chartDays, setChartDays] = useState<ChartDays>(14);
+  const [chartSellerId, setChartSellerId] = useState<string>("");
 
   const range = useMemo(() => dashboardRange(preset), [preset]);
   const prevR = useMemo(() => previousRange(range), [range]);
@@ -113,17 +146,14 @@ export default function DashboardClient() {
     try {
       const cur = rangeBoundsIso(range);
       const prev = rangeBoundsIso(prevR);
-      const days = last14Days();
-      const bar14Start = days[0].toISOString();
+      const chartStart = lastNDays(30)[0].toISOString();
 
       const [
         curSalesQ,
-        curPaymentsQ,
         curExpensesQ,
         prevSalesQ,
-        prevPaymentsQ,
         prevExpensesQ,
-        bar14Q,
+        chartSalesQ,
         recentQ,
         balancesQ,
         stockQ,
@@ -137,16 +167,11 @@ export default function DashboardClient() {
         supabase
           .from("sales")
           .select(
-            "id,code,total,paid_amount,quantity,customer_id,seller_id,status,created_at"
+            "id,code,total,paid_amount,quantity,customer_id,seller_id,status,created_at,sale_payments(id,amount,paid_at,payment_method_id)"
           )
           .gte("created_at", cur.startIso)
           .lt("created_at", cur.endIso)
-          .neq("status", "cancelada"),
-        supabase
-          .from("sale_payments")
-          .select("id,amount,paid_at,payment_method_id")
-          .gte("paid_at", cur.startIso)
-          .lt("paid_at", cur.endIso),
+          .is("canceled_at", null),
         supabase
           .from("expenses")
           .select("amount")
@@ -154,15 +179,10 @@ export default function DashboardClient() {
           .lt("paid_at", cur.endIso),
         supabase
           .from("sales")
-          .select("total")
+          .select("total,sale_payments(amount)")
           .gte("created_at", prev.startIso)
           .lt("created_at", prev.endIso)
-          .neq("status", "cancelada"),
-        supabase
-          .from("sale_payments")
-          .select("amount")
-          .gte("paid_at", prev.startIso)
-          .lt("paid_at", prev.endIso),
+          .is("canceled_at", null),
         supabase
           .from("expenses")
           .select("amount")
@@ -170,11 +190,16 @@ export default function DashboardClient() {
           .lt("paid_at", prev.endIso),
         supabase
           .from("sales")
-          .select("created_at,total,status")
-          .gte("created_at", bar14Start),
+          .select(
+            "id,code,created_at,total,quantity,customer_id,seller_id"
+          )
+          .gte("created_at", chartStart)
+          .is("canceled_at", null),
         supabase
           .from("sales")
-          .select("*")
+          .select(
+            "id,tenant_id,code,customer_id,seller_id,carga_id,quantity,unit_price,discount,total,paid_amount,status,notes,canceled_at,cancel_reason,created_at"
+          )
           .order("created_at", { ascending: false })
           .limit(8),
         supabase
@@ -197,33 +222,57 @@ export default function DashboardClient() {
           .from("cargas")
           .select("id,opened_at")
           .eq("status", "aberta"),
-        supabase.from("customers").select("*").order("name"),
-        supabase.from("sellers").select("*").order("name"),
-        supabase.from("payment_methods").select("*").order("name"),
+        supabase.from("customers").select("id,name").order("name"),
+        supabase.from("sellers").select("id,name,active").order("name"),
+        supabase.from("payment_methods").select("id,name").order("name"),
       ]);
 
-      const bar14Rows = (bar14Q.data ?? []).filter(
-        (r: any) => r.status !== "cancelada"
-      );
-      const buckets = bucketByDay(
-        bar14Rows as { created_at: string; total: number }[],
-        days,
-        (r) => new Date(r.created_at),
-        (r) => Number(r.total)
-      );
-      const todayKey = days[days.length - 1].toISOString().slice(0, 10);
-      const bar14: BarPoint[] = buckets.map((b) => {
-        const d = new Date(b.date);
-        return {
-          date: b.date,
-          value: b.value,
-          label: d.toLocaleDateString("pt-BR", {
-            day: "2-digit",
-            month: "2-digit",
-          }),
-          highlight: b.date === todayKey,
-        };
-      });
+      type ChartSaleRow = {
+        id: string;
+        code: number | null;
+        created_at: string;
+        total: number | string;
+        quantity: number | string;
+        customer_id: string | null;
+        seller_id: string | null;
+      };
+      type SaleWithPayments = {
+        id: string;
+        code: number;
+        total: number | string;
+        paid_amount: number | string;
+        quantity: number | string;
+        customer_id: string | null;
+        seller_id: string | null;
+        status: SaleLite["status"];
+        created_at: string;
+        sale_payments?:
+          | {
+              id: string;
+              amount: number | string;
+              paid_at: string;
+              payment_method_id: string | null;
+            }[]
+          | null;
+      };
+      type PrevSaleRow = {
+        total: number | string;
+        sale_payments?: { amount: number | string }[] | null;
+      };
+      type AmountRow = { amount: number | string };
+      type TotalRow = { total: number | string };
+
+      const chart30Sales: ChartSale[] = (
+        (chartSalesQ.data ?? []) as ChartSaleRow[]
+      ).map((r) => ({
+        id: r.id,
+        code: Number(r.code ?? 0),
+        created_at: r.created_at,
+        total: Number(r.total ?? 0),
+        quantity: Number(r.quantity ?? 0),
+        customer_id: r.customer_id ?? null,
+        seller_id: r.seller_id ?? null,
+      }));
 
       const balances = (balancesQ.data ?? []) as {
         open_balance: number | null;
@@ -246,42 +295,79 @@ export default function DashboardClient() {
           .filter((x): x is string => !!x)
           .sort()[0] ?? null;
 
-      const sumAmount = (rows: any[] | null | undefined) =>
+      const sumAmount = (rows: AmountRow[] | null | undefined) =>
         (rows ?? []).reduce((s, r) => s + Number(r.amount ?? 0), 0);
-      const sumTotal = (rows: any[] | null | undefined) =>
+      const sumTotal = (rows: TotalRow[] | null | undefined) =>
         (rows ?? []).reduce((s, r) => s + Number(r.total ?? 0), 0);
 
+      // Vendas do período + pagamentos via nested select. Recebido = soma
+      // de TODOS os pagamentos das vendas do período (mesma definição do
+      // /relatorios), independente de quando o pagamento foi feito.
+      const curRows = (curSalesQ.data ?? []) as SaleWithPayments[];
+      const curSales: SaleLite[] = curRows.map((s) => ({
+        id: s.id,
+        code: s.code,
+        total: Number(s.total),
+        paid_amount: Number(s.paid_amount),
+        quantity: Number(s.quantity),
+        customer_id: s.customer_id ?? null,
+        seller_id: s.seller_id ?? null,
+        status: s.status,
+        created_at: s.created_at,
+      }));
+      const curPayments: PaymentLite[] = curRows.flatMap((s) =>
+        (s.sale_payments ?? []).map((p) => ({
+          id: p.id,
+          amount: Number(p.amount ?? 0),
+          paid_at: p.paid_at,
+          payment_method_id: p.payment_method_id ?? null,
+        }))
+      );
+      const prevRows = (prevSalesQ.data ?? []) as PrevSaleRow[];
+      const prevPaymentsTotal = prevRows.reduce(
+        (s, r) =>
+          s +
+          (r.sale_payments ?? []).reduce(
+            (ss: number, p) => ss + Number(p.amount ?? 0),
+            0
+          ),
+        0
+      );
+
+      const stockData = (stockQ.data ?? null) as {
+        on_hand: number | null;
+      } | null;
+      const prodData = (prodQ.data ?? null) as {
+        min_stock: number | null;
+      } | null;
+      const cashData = (cashQ.data ?? null) as {
+        id: string;
+        opened_at: string | null;
+      } | null;
+
       setState({
-        curSales: ((curSalesQ.data ?? []) as SaleLite[]).map((s) => ({
-          ...s,
-          total: Number(s.total),
-          paid_amount: Number(s.paid_amount),
-          quantity: Number(s.quantity),
-        })),
-        curPayments: ((curPaymentsQ.data ?? []) as PaymentLite[]).map((p) => ({
-          ...p,
-          amount: Number(p.amount),
-        })),
-        curExpenses: sumAmount(curExpensesQ.data),
-        prevSalesTotal: sumTotal(prevSalesQ.data),
-        prevPaymentsTotal: sumAmount(prevPaymentsQ.data),
-        prevExpenses: sumAmount(prevExpensesQ.data),
-        bar14,
+        curSales,
+        curPayments,
+        curExpenses: sumAmount(curExpensesQ.data as AmountRow[] | null),
+        prevSalesTotal: sumTotal(prevSalesQ.data as TotalRow[] | null),
+        prevPaymentsTotal,
+        prevExpenses: sumAmount(prevExpensesQ.data as AmountRow[] | null),
+        chart30Sales,
         recent: (recentQ.data as Sale[]) ?? [],
         receivable,
         oldestOpenIso,
-        stock: Number((stockQ.data as any)?.on_hand ?? 0),
-        minStock: Number((prodQ.data as any)?.min_stock ?? 0),
-        cashOpen: !!cashQ.data,
-        cashOpenedAt: (cashQ.data as any)?.opened_at ?? null,
+        stock: Number(stockData?.on_hand ?? 0),
+        minStock: Number(prodData?.min_stock ?? 0),
+        cashOpen: !!cashData,
+        cashOpenedAt: cashData?.opened_at ?? null,
         openCargas: cargasData.length,
         oldestCargaOpenedAt,
       });
       setCustomers((custsQ.data as Customer[]) ?? []);
       setSellers((sellersQ.data as Seller[]) ?? []);
       setMethods((methodsQ.data as PaymentMethod[]) ?? []);
-    } catch (e: any) {
-      setError(e.message ?? String(e));
+    } catch (e: unknown) {
+      setError(errorMessage(e));
     } finally {
       setLoading(false);
     }
@@ -289,6 +375,73 @@ export default function DashboardClient() {
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preset]);
+
+  // Onboarding: carrega contagens uma vez por tenant pra decidir
+  // quais passos exibir no checklist.
+  useEffect(() => {
+    if (!tenant || !isAdmin) return;
+    let cancelled = false;
+    (async () => {
+      const [veh, sl, mt, cg] = await Promise.all([
+        supabase
+          .from("vehicles")
+          .select("id", { count: "exact", head: true }),
+        supabase
+          .from("sellers")
+          .select("id", { count: "exact", head: true }),
+        supabase
+          .from("payment_methods")
+          .select("id", { count: "exact", head: true }),
+        supabase
+          .from("cargas")
+          .select("id", { count: "exact", head: true }),
+      ]);
+      if (cancelled) return;
+      setCounts({
+        vehicles: veh.count ?? 0,
+        sellers: sl.count ?? 0,
+        methods: mt.count ?? 0,
+        cargas: cg.count ?? 0,
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tenant, isAdmin, supabase]);
+
+  // Realtime: invalida o painel quando vendas, pagamentos ou despesas
+  // mudam em qualquer lugar do app. Faz reload simples com debounce
+  // pra agrupar bursts (ex.: import de Excel).
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const trigger = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => load(), 1500);
+    };
+    const channel = supabase
+      .channel("dashboard-live")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "sales" },
+        trigger
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "sale_payments" },
+        trigger
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "expenses" },
+        trigger
+      )
+      .subscribe();
+    return () => {
+      if (timer) clearTimeout(timer);
+      supabase.removeChannel(channel);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preset]);
 
@@ -320,10 +473,67 @@ export default function DashboardClient() {
   const dRec = pctChange(recebido, state.prevPaymentsTotal);
   const dLucro = pctChange(lucroAtual, lucroPrev);
 
+  // Pontos do gráfico — recalculados quando muda o range, o vendedor
+  // filtrado, ou os dados crus.
+  const chartPoints = useMemo<BarPoint[]>(() => {
+    const days = lastNDays(chartDays);
+    const filtered = chartSellerId
+      ? state.chart30Sales.filter((r) => r.seller_id === chartSellerId)
+      : state.chart30Sales;
+    const buckets = bucketByDay(
+      filtered,
+      days,
+      (r) => new Date(r.created_at),
+      (r) => r.total
+    );
+    // todayKey precisa ser yyyy-mm-dd em TZ LOCAL (não UTC). E o
+    // rótulo da barra também é gerado a partir de uma Date construída
+    // em local-midnight, senão fusos negativos mostram "01/05" pra
+    // bucket "2026-05-02" (parsing ISO date-only é UTC).
+    const todayKey = fmtYmd(days[days.length - 1]);
+    return buckets.map((b) => {
+      const d = ymdToDate(b.date);
+      return {
+        date: b.date,
+        value: b.value,
+        label: d.toLocaleDateString("pt-BR", {
+          day: "2-digit",
+          month: "2-digit",
+        }),
+        subLabel: WEEKDAY_LABELS[d.getDay()],
+        highlight: b.date === todayKey,
+      };
+    });
+  }, [chartDays, chartSellerId, state.chart30Sales]);
+
+  const chartSummary = useMemo(() => {
+    const total = chartPoints.reduce((s, p) => s + p.value, 0);
+    const days = chartPoints.length || 1;
+    const avg = total / days;
+    const peak = chartPoints.reduce(
+      (m, p) => (p.value > m.value ? p : m),
+      { value: 0, date: "" } as { value: number; date: string }
+    );
+    return { total, avg, peak };
+  }, [chartPoints]);
+
+  // Vendas dentro da janela do gráfico (chartDays). Usado pelos top lists
+  // pra que o ranking sempre cubra um período útil mesmo quando o seletor
+  // principal está em "Hoje".
+  const chartWindowSales = useMemo(() => {
+    const days = lastNDays(chartDays);
+    const startMs = days[0].getTime();
+    const endMs = days[days.length - 1].getTime() + 86_400_000;
+    return state.chart30Sales.filter((s) => {
+      const t = new Date(s.created_at).getTime();
+      return t >= startMs && t < endMs;
+    });
+  }, [chartDays, state.chart30Sales]);
+
   const topSellers = useMemo(
     () =>
       topBy(
-        state.curSales,
+        chartWindowSales,
         (s) => s.seller_id,
         (s) => s.total,
         3
@@ -332,12 +542,12 @@ export default function DashboardClient() {
         label: sellerMap[t.key]?.name ?? "—",
         value: t.value,
       })),
-    [state.curSales, sellerMap]
+    [chartWindowSales, sellerMap]
   );
   const topCustomers = useMemo(
     () =>
       topBy(
-        state.curSales,
+        chartWindowSales,
         (s) => s.customer_id,
         (s) => s.total,
         3
@@ -346,7 +556,7 @@ export default function DashboardClient() {
         label: customerMap[t.key]?.name ?? "—",
         value: t.value,
       })),
-    [state.curSales, customerMap]
+    [chartWindowSales, customerMap]
   );
   const topMethods = useMemo(
     () =>
@@ -416,6 +626,46 @@ export default function DashboardClient() {
   const presetLabel =
     DASHBOARD_PRESETS.find((p) => p.id === preset)?.label ?? "";
 
+  // Onboarding: só renderiza pra admin com tenant fresco (<14 dias)
+  // E que ainda não fechou todos os passos. Não pisca: se counts não
+  // chegou, não renderiza nada.
+  const onboardingSteps = useMemo<OnboardingStep[]>(() => {
+    if (!isAdmin || !counts || !tenant) return [];
+    const tenantAgeDays =
+      (Date.now() - new Date(tenant.created_at).getTime()) / 86_400_000;
+    if (tenantAgeDays > 14) return [];
+    return [
+      {
+        id: "methods",
+        label: "Configurar formas de pagamento",
+        description: "Dinheiro, PIX, cartão — com taxas pra DRE.",
+        href: "/formas-pagamento",
+        done: counts.methods > 0,
+      },
+      {
+        id: "vehicles",
+        label: "Cadastrar veículo",
+        description: "Carro/moto da rota.",
+        href: "/configuracoes/veiculos",
+        done: counts.vehicles > 0,
+      },
+      {
+        id: "sellers",
+        label: "Cadastrar vendedor",
+        description: "Quem vende em campo (com comissão se quiser).",
+        href: "/configuracoes/vendedores",
+        done: counts.sellers > 0,
+      },
+      {
+        id: "cargas",
+        label: "Abrir primeira carga",
+        description: "Estoque, operador, rota — começa a operação.",
+        href: "/carga/abrir",
+        done: counts.cargas > 0,
+      },
+    ];
+  }, [isAdmin, counts, tenant]);
+
   return (
     <div className="space-y-6">
       <header className="flex items-start justify-between flex-wrap gap-3">
@@ -446,6 +696,10 @@ export default function DashboardClient() {
         <div className="card border-red-300 bg-red-50 text-red-700">
           Erro ao carregar dados: {error}
         </div>
+      )}
+
+      {onboardingSteps.length > 0 && (
+        <EmptyOnboarding steps={onboardingSteps} />
       )}
 
       <DashboardAlerts alerts={alerts} />
@@ -545,39 +799,169 @@ export default function DashboardClient() {
       </div>
 
       <div className="card">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-lg font-bold text-coco-900">
-            Vendas · últimos 14 dias
-          </h2>
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
+          <div>
+            <h2 className="text-lg font-bold text-coco-900">
+              Vendas por dia · últimos {chartDays} dias
+              {chartSellerId && sellerMap[chartSellerId] && (
+                <span className="text-coco-600 font-normal text-base ml-1">
+                  · {sellerMap[chartSellerId].name}
+                </span>
+              )}
+            </h2>
+            <p className="text-xs text-coco-600">
+              Total {brl(chartSummary.total)} · média{" "}
+              {brl(chartSummary.avg)}/dia
+              {chartSummary.peak.value > 0 && (
+                <>
+                  {" "}
+                  · melhor dia{" "}
+                  {ymdToDate(chartSummary.peak.date).toLocaleDateString(
+                    "pt-BR",
+                    { day: "2-digit", month: "2-digit" }
+                  )}{" "}
+                  ({brl(chartSummary.peak.value)})
+                </>
+              )}
+            </p>
+          </div>
           <Link href="/relatorios" className="text-coco-700 text-sm underline">
             ver mais
           </Link>
         </div>
-        {state.bar14.length > 0 ? (
-          <BarChart points={state.bar14} />
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <div className="flex gap-1 bg-coco-50 p-1 rounded-xl">
+            {CHART_DAY_OPTIONS.map((d) => (
+              <button
+                key={d}
+                onClick={() => setChartDays(d)}
+                className={`px-3 py-1 text-sm rounded-lg transition-colors ${
+                  chartDays === d
+                    ? "bg-white text-coco-900 shadow-sm font-semibold"
+                    : "text-coco-700 hover:bg-white/60"
+                }`}
+              >
+                {d} dias
+              </button>
+            ))}
+          </div>
+          <select
+            value={chartSellerId}
+            onChange={(e) => setChartSellerId(e.target.value)}
+            className="input !py-1 !w-auto text-sm"
+            aria-label="Filtrar gráfico por vendedor"
+          >
+            <option value="">Todos os vendedores</option>
+            {sellers
+              .filter((s) => s.active || s.id === chartSellerId)
+              .map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                  {s.active ? "" : " (inativo)"}
+                </option>
+              ))}
+          </select>
+          {chartSellerId && (
+            <button
+              onClick={() => setChartSellerId("")}
+              className="text-coco-700 text-xs underline"
+            >
+              limpar filtro
+            </button>
+          )}
+        </div>
+        {chartPoints.length > 0 && chartSummary.total > 0 ? (
+          <BarChart points={chartPoints} />
         ) : (
-          <p className="text-coco-600 text-sm">Sem vendas no intervalo.</p>
+          <p className="text-coco-600 text-sm">
+            Sem vendas no intervalo
+            {chartSellerId ? " pra esse vendedor" : ""}.
+          </p>
         )}
       </div>
 
+      <details className="card">
+        <summary className="cursor-pointer font-bold text-coco-900">
+          🔍 Auditar vendas contabilizadas em{" "}
+          <span className="text-coco-700 font-normal">
+            {presetLabel.toLowerCase()}
+          </span>{" "}
+          ({state.curSales.length})
+        </summary>
+        <p className="text-xs text-coco-600 mt-2">
+          Cada linha aqui é uma venda que entrou no <strong>Faturado</strong>.
+          Vendas canceladas (canceled_at definido) já são filtradas.
+        </p>
+        {state.curSales.length === 0 ? (
+          <p className="text-coco-600 text-sm mt-3">
+            Nada contabilizado nesse período.
+          </p>
+        ) : (
+          <div className="overflow-x-auto mt-3">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Data/hora</th>
+                  <th>Cliente</th>
+                  <th>Vendedor</th>
+                  <th>Qtd</th>
+                  <th>Total</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...state.curSales]
+                  .sort(
+                    (a, b) =>
+                      new Date(b.created_at).getTime() -
+                      new Date(a.created_at).getTime()
+                  )
+                  .map((s) => (
+                    <tr key={s.id}>
+                      <td className="text-coco-500">#{s.code}</td>
+                      <td>{fmtDate(s.created_at)}</td>
+                      <td>
+                        {s.customer_id
+                          ? customerMap[s.customer_id]?.name ?? "—"
+                          : "Consumidor"}
+                      </td>
+                      <td>
+                        {s.seller_id
+                          ? sellerMap[s.seller_id]?.name ?? "—"
+                          : "—"}
+                      </td>
+                      <td>{s.quantity}</td>
+                      <td className="font-semibold">{brl(Number(s.total))}</td>
+                      <td>
+                        <StatusBadge status={s.status} />
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </details>
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <TopList
-          title="Top vendedores"
+          title={`Top vendedores · ${chartDays}d`}
           icon="🏆"
           items={topSellers}
-          emptyText={`Sem vendas em ${presetLabel.toLowerCase()}.`}
+          emptyText={`Sem vendas nos últimos ${chartDays} dias.`}
         />
         <TopList
-          title="Top clientes"
+          title={`Top clientes · ${chartDays}d`}
           icon="👤"
           items={topCustomers}
-          emptyText="Sem cliente identificado no período."
+          emptyText={`Sem cliente identificado nos últimos ${chartDays} dias.`}
         />
         <TopList
-          title="Recebido por forma"
+          title={`Recebido por forma · ${presetLabel.toLowerCase()}`}
           icon="💳"
           items={topMethods}
-          emptyText="Nada recebido no período."
+          emptyText={`Nada recebido em ${presetLabel.toLowerCase()}.`}
         />
       </div>
 

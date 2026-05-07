@@ -103,16 +103,22 @@ export function topBy<T>(
     .slice(0, limit);
 }
 
-// Constrói os 14 últimos dias (incluindo hoje), do mais antigo pro mais novo.
-export function last14Days(ref: Date = new Date()): Date[] {
+// Constrói os N últimos dias (incluindo o de referência), do mais antigo
+// pro mais novo.
+export function lastNDays(n: number, ref: Date = new Date()): Date[] {
   const days: Date[] = [];
-  for (let i = 13; i >= 0; i--) {
+  for (let i = n - 1; i >= 0; i--) {
     const d = new Date(ref);
     d.setHours(0, 0, 0, 0);
     d.setDate(d.getDate() - i);
     days.push(d);
   }
   return days;
+}
+
+// Atalho histórico — mantém call sites antigos.
+export function last14Days(ref?: Date): Date[] {
+  return lastNDays(14, ref);
 }
 
 // Retorna horas inteiras (>=0) entre `iso` e agora. null se iso inválido.

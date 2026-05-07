@@ -3,6 +3,9 @@ import "./globals.css";
 import AppShell from "@/components/AppShell";
 import { ToastProvider } from "@/components/Toast";
 import RegisterSW from "@/components/RegisterSW";
+import ErrorBoundary from "@/components/ErrorBoundary";
+import GlobalSearch from "@/components/GlobalSearch";
+import KeyboardShortcuts from "@/components/KeyboardShortcuts";
 
 export const metadata: Metadata = {
   title: "Coco da Amazônia · Controle de Vendas",
@@ -29,9 +32,13 @@ export default function RootLayout({
   return (
     <html lang="pt-BR">
       <body>
-        <ToastProvider>
-          <AppShell>{children}</AppShell>
-        </ToastProvider>
+        <ErrorBoundary>
+          <ToastProvider>
+            <AppShell>{children}</AppShell>
+            <GlobalSearch />
+            <KeyboardShortcuts />
+          </ToastProvider>
+        </ErrorBoundary>
         <RegisterSW />
       </body>
     </html>

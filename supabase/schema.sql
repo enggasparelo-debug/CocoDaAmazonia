@@ -481,17 +481,34 @@ from public.customers c
 left join public.sales s on s.customer_id = c.id and s.canceled_at is null
 group by c.id, c.name, c.tenant_id, c.credit_limit;
 
+-- View do saldo de estoque por tenant. Mantida em sincronia com a versão
+-- da migration_v4 (a antiga ignorava carga_saida/carga_retorno/carga_perda).
+-- Vendas dentro de carga já saíram via 'carga_saida'; só vendas de balcão
+-- (carga_id is null) entram como saída direta aqui.
 drop view if exists public.inventory_balance cascade;
 create view public.inventory_balance as
 select
   t.id as tenant_id,
   (
-    coalesce((select sum(case when kind='entrada' then quantity
-                              when kind='perda'   then -quantity
-                              when kind='ajuste'  then quantity end)
-              from public.inventory_movements im where im.tenant_id = t.id), 0)
+    coalesce((
+      select sum(case
+                   when im.kind = 'entrada'       then  im.quantity
+                   when im.kind = 'ajuste'        then  im.quantity
+                   when im.kind = 'carga_retorno' then  im.quantity
+                   when im.kind = 'perda'         then -im.quantity
+                   when im.kind = 'carga_saida'   then -im.quantity
+                   when im.kind = 'carga_perda'   then -im.quantity
+                 end)
+        from public.inventory_movements im
+       where im.tenant_id = t.id
+    ), 0)
     -
-    coalesce((select sum(quantity) from public.sales s
-              where s.tenant_id = t.id and s.canceled_at is null), 0)
+    coalesce((
+      select sum(s.quantity)
+        from public.sales s
+       where s.tenant_id = t.id
+         and s.canceled_at is null
+         and s.carga_id is null
+    ), 0)
   )::int as on_hand
 from public.tenants t;
