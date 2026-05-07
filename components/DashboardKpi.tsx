@@ -67,7 +67,9 @@ export default function DashboardKpi({
 }) {
   const a = ACCENT[accent];
   const valueCls =
-    size === "hero" ? "text-3xl md:text-4xl font-bold" : "text-2xl font-bold";
+    size === "hero"
+      ? "text-3xl md:text-4xl font-bold"
+      : "text-xl lg:text-2xl font-bold";
   const inner = (
     <div className={`card ${a.bg} ${a.border} h-full`}>
       <div className={`flex items-center justify-between text-xs uppercase tracking-wider ${a.label}`}>
