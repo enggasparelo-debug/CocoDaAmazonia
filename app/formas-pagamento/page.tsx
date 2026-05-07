@@ -40,12 +40,22 @@ export default function FormasPagamentoPage() {
       setError("Nome é obrigatório.");
       return;
     }
+    const feePercent = Number(editing.fee_percent ?? 0);
+    const feeFixed = Number(editing.fee_fixed ?? 0);
+    if (!Number.isFinite(feePercent) || feePercent < 0 || feePercent >= 100) {
+      setError("Taxa % deve estar entre 0 e 99,99.");
+      return;
+    }
+    if (!Number.isFinite(feeFixed) || feeFixed < 0) {
+      setError("Taxa fixa não pode ser negativa.");
+      return;
+    }
     const payload = {
       name: editing.name!.trim(),
       is_credit: editing.is_credit ?? false,
       active: editing.active ?? true,
-      fee_percent: Number(editing.fee_percent ?? 0),
-      fee_fixed: Number(editing.fee_fixed ?? 0),
+      fee_percent: feePercent,
+      fee_fixed: feeFixed,
     };
     const op = editing.id
       ? supabase.from("payment_methods").update(payload).eq("id", editing.id)

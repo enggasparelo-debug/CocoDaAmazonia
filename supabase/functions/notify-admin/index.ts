@@ -27,7 +27,7 @@
 //   supabase secrets set VAPID_PUBLIC_KEY=... VAPID_PRIVATE_KEY=... VAPID_SUBJECT=mailto:...
 //
 // Esta function NÃO é chamada pelo client — só pelo cron interno do
-// Supabase (que invoca via service role).
+// Supabase (que invoca com header `X-Cron-Secret`).
 
 // @ts-expect-error Deno runtime types resolvem só no deploy
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -57,11 +57,49 @@ const VAPID_PUBLIC = Deno.env.get("VAPID_PUBLIC_KEY")!;
 const VAPID_PRIVATE = Deno.env.get("VAPID_PRIVATE_KEY")!;
 // @ts-expect-error Deno runtime
 const VAPID_SUBJECT = Deno.env.get("VAPID_SUBJECT") ?? "mailto:admin@coco";
+// @ts-expect-error Deno runtime
+const CRON_SECRET = Deno.env.get("NOTIFY_CRON_SECRET");
 
 webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC, VAPID_PRIVATE);
 
+// Rate limit em memória: 1 req / 60s por IP. Como Edge Functions
+// reciclam isolates, isso não é à prova de DDoS distribuído — é só
+// pra evitar floods triviais. A defesa real é o CRON_SECRET.
+const lastHitByIp = new Map<string, number>();
+const RATE_LIMIT_WINDOW_MS = 60_000;
+
 // @ts-expect-error Deno runtime
-Deno.serve(async () => {
+Deno.serve(async (req: Request) => {
+  // 1) Auth: header X-Cron-Secret obrigatório.
+  if (!CRON_SECRET) {
+    return new Response(
+      JSON.stringify({ error: "NOTIFY_CRON_SECRET not configured" }),
+      { status: 500, headers: { "content-type": "application/json" } }
+    );
+  }
+  const provided = req.headers.get("x-cron-secret");
+  if (!provided || provided !== CRON_SECRET) {
+    return new Response(
+      JSON.stringify({ error: "unauthorized" }),
+      { status: 401, headers: { "content-type": "application/json" } }
+    );
+  }
+
+  // 2) Rate limit por IP (defesa em profundidade).
+  const ip =
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    req.headers.get("cf-connecting-ip") ??
+    "unknown";
+  const now = Date.now();
+  const last = lastHitByIp.get(ip) ?? 0;
+  if (now - last < RATE_LIMIT_WINDOW_MS) {
+    return new Response(
+      JSON.stringify({ error: "rate_limited" }),
+      { status: 429, headers: { "content-type": "application/json" } }
+    );
+  }
+  lastHitByIp.set(ip, now);
+
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
   const tenants = await supabase.from("tenants").select("id, name");
   const events: {

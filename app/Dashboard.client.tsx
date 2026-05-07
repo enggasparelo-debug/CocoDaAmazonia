@@ -184,7 +184,9 @@ export default function DashboardClient() {
           .is("canceled_at", null),
         supabase
           .from("sales")
-          .select("*")
+          .select(
+            "id,tenant_id,code,customer_id,seller_id,carga_id,quantity,unit_price,discount,total,paid_amount,status,notes,canceled_at,cancel_reason,created_at"
+          )
           .order("created_at", { ascending: false })
           .limit(8),
         supabase
@@ -207,9 +209,9 @@ export default function DashboardClient() {
           .from("cargas")
           .select("id,opened_at")
           .eq("status", "aberta"),
-        supabase.from("customers").select("*").order("name"),
-        supabase.from("sellers").select("*").order("name"),
-        supabase.from("payment_methods").select("*").order("name"),
+        supabase.from("customers").select("id,name").order("name"),
+        supabase.from("sellers").select("id,name,active").order("name"),
+        supabase.from("payment_methods").select("id,name").order("name"),
       ]);
 
       type ChartSaleRow = {

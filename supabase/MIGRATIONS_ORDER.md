@@ -50,24 +50,34 @@ por ambiente.
 | 18 | `migration_v17_returns.sql` | `sale_returns` + RPC `refund_sale`. |
 | 19 | `migration_v18_attachments_and_notifications.sql` | `attachment_url` + `notification_log`. |
 | 20 | `migration_v19_inventory_matview.sql` | inventory_balance vira matview. |
+| 21 | `migration_v20_audit_retention_and_indexes.sql` | `prune_audit_log()` + índices compostos. |
 
 ## Pós-migração (Edge Functions)
 
 ### Push notifications (opcional)
 
 ```bash
+# Gere um secret aleatório (uma vez por ambiente):
+openssl rand -hex 32   # → guarda esse valor
+
 supabase functions deploy notify-admin --no-verify-jwt
 supabase secrets set \
   VAPID_PUBLIC_KEY=... \
   VAPID_PRIVATE_KEY=... \
-  VAPID_SUBJECT=mailto:admin@suaempresa.com
+  VAPID_SUBJECT=mailto:admin@suaempresa.com \
+  NOTIFY_CRON_SECRET=<o-hex-de-32-bytes-acima>
 ```
 
-Configure cron (Dashboard → Edge Functions → notify-admin → Cron):
+Configure cron (Dashboard → Edge Functions → notify-admin → Cron) com
+o **header customizado** `X-Cron-Secret: <mesmo-valor-acima>`:
 ```
 0 8-20/2 * * *
 ```
 (a cada 2h entre 8h e 20h)
+
+> ⚠️ Sem `NOTIFY_CRON_SECRET` configurado a função retorna 500. Sem
+> header `X-Cron-Secret` correto retorna 401. Isso protege contra
+> abuso de quem descobrir a URL pública da função.
 
 ### Sentry (opcional)
 

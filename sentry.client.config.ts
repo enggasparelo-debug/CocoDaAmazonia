@@ -8,6 +8,7 @@
 //   4. Redeploy
 
 import * as Sentry from "@sentry/nextjs";
+import { sentryBeforeSend } from "./lib/sentryRedact";
 
 const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
 
@@ -18,5 +19,6 @@ if (dsn) {
     replaysSessionSampleRate: 0,
     replaysOnErrorSampleRate: 0,
     environment: process.env.NEXT_PUBLIC_VERCEL_ENV ?? "development",
+    beforeSend: sentryBeforeSend,
   });
 }

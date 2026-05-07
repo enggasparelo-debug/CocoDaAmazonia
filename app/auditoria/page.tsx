@@ -45,7 +45,7 @@ function diff(before: AuditRow, after: AuditRow): DiffEntry[] {
 
 export default function AuditoriaPage() {
   const supabase = createClient();
-  const { isAdmin, loading: tenantLoading } = useTenant();
+  const { isAdmin, loading: tenantLoading, tenant } = useTenant();
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [filterTable, setFilterTable] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -55,12 +55,17 @@ export default function AuditoriaPage() {
   const PAGE_SIZE = 50;
 
   async function load(reset = true) {
+    if (!tenant) return;
     if (reset) setLoading(true);
     else setLoadingMore(true);
     const from = reset ? 0 : logs.length;
+    // tenant_id explícito força o uso do índice composto
+    // audit_log_tenant_at_idx (RLS já filtra, mas o planner escolhe
+    // melhor o índice quando o predicado é explícito).
     let q = supabase
       .from("audit_log")
       .select("*")
+      .eq("tenant_id", tenant.id)
       .order("at", { ascending: false })
       .range(from, from + PAGE_SIZE - 1);
     if (filterTable) q = q.eq("table_name", filterTable);
@@ -73,9 +78,9 @@ export default function AuditoriaPage() {
   }
 
   useEffect(() => {
-    if (!tenantLoading && isAdmin) load(true);
+    if (!tenantLoading && isAdmin && tenant) load(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterTable, isAdmin, tenantLoading]);
+  }, [filterTable, isAdmin, tenantLoading, tenant?.id]);
 
   if (tenantLoading) return <p className="text-coco-700">Carregando…</p>;
 
