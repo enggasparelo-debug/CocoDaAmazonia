@@ -222,6 +222,9 @@ export default function FinanceiroPage() {
           <h1 className="text-3xl font-bold text-coco-900">Financeiro</h1>
           <p className="text-coco-600">KPIs gerenciais e fluxo de recebimentos.</p>
         </div>
+        <a href="/fluxo-caixa" className="btn-secondary">
+          📉 Fluxo de Caixa
+        </a>
         <a href="/financeiro/dre" className="btn-secondary">
           📊 Ver DRE
         </a>
