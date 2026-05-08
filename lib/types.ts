@@ -281,3 +281,46 @@ export type AuditLog = {
   after_data: Record<string, unknown> | null;
   at: string;
 };
+
+export type BankAccount = {
+  id: string;
+  tenant_id: string;
+  name: string;
+  bank_name: string;
+  account_number: string | null;
+  agency: string | null;
+  notes: string | null;
+  active: boolean;
+  created_at: string;
+};
+
+export type BankReconciliationStatus = "open" | "closed";
+
+export type BankReconciliation = {
+  id: string;
+  tenant_id: string;
+  bank_account_id: string;
+  period_start: string;
+  period_end: string;
+  statement_ending_balance: number | null;
+  status: BankReconciliationStatus;
+  notes: string | null;
+  created_by: string | null;
+  closed_at: string | null;
+  closed_by: string | null;
+  created_at: string;
+};
+
+export type BankReconciliationItemStatus = "pending" | "matched" | "ignored";
+
+export type BankReconciliationItem = {
+  id: string;
+  tenant_id: string;
+  reconciliation_id: string;
+  bank_date: string;
+  bank_description: string;
+  bank_amount: number;
+  expense_id: string | null;
+  status: BankReconciliationItemStatus;
+  created_at: string;
+};
