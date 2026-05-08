@@ -4,13 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { brl, computeFee, fmtPct, pctChange } from "@/lib/format";
-import {
-  DASHBOARD_PRESETS,
-  dashboardRange,
-  rangeBoundsIso,
-  previousRange,
-  type DashboardPreset,
-} from "@/lib/dashboard";
+import { rangeBoundsIso } from "@/lib/dashboard";
 
 type Sale = { quantity: number; total: number; canceled_at: string | null };
 type Inv = {
@@ -31,9 +25,37 @@ type MethodRow = {
   fee_fixed: number | null;
 };
 
+function currentMonthValue() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function monthRange(ym: string): { from: string; to: string } {
+  const [y, m] = ym.split("-").map(Number);
+  const lastDay = new Date(y, m, 0).getDate();
+  return {
+    from: `${ym}-01`,
+    to: `${ym}-${String(lastDay).padStart(2, "0")}`,
+  };
+}
+
+function prevMonth(ym: string): string {
+  const [y, m] = ym.split("-").map(Number);
+  const d = new Date(y, m - 2, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function fmtMonth(ym: string): string {
+  const [y, m] = ym.split("-").map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString("pt-BR", {
+    month: "long",
+    year: "numeric",
+  });
+}
+
 export default function DRE() {
   const supabase = createClient();
-  const [preset, setPreset] = useState<DashboardPreset>("mes");
+  const [month, setMonth] = useState(currentMonthValue());
   const [loading, setLoading] = useState(true);
 
   // Período corrente
@@ -43,21 +65,22 @@ export default function DRE() {
   const [periodPayments, setPeriodPayments] = useState<PaymentRow[]>([]);
   const [methods, setMethods] = useState<MethodRow[]>([]);
 
-  // Período anterior (pra comparação)
-  const [prevSalesTotal, setPrevSalesTotal] = useState(0);
+  // Período anterior
+  const [prevSalesAll, setPrevSalesAll] = useState<Sale[]>([]);
+  const [prevExpensesTotal, setPrevExpensesTotal] = useState(0);
   const [prevReceived, setPrevReceived] = useState(0);
-  const [prevExpenses, setPrevExpenses] = useState(0);
 
-  // Entradas pra cálculo de CMV por período (FIFO simples no client).
+  // Entradas de estoque pra CMV
   const [invMovements, setInvMovements] = useState<Inv[]>([]);
 
-  const range = useMemo(() => dashboardRange(preset), [preset]);
-  const prevR = useMemo(() => previousRange(range), [range]);
+  const range = useMemo(() => monthRange(month), [month]);
+  const prevYm = useMemo(() => prevMonth(month), [month]);
+  const prevRange = useMemo(() => monthRange(prevYm), [prevYm]);
 
   async function load() {
     setLoading(true);
     const cur = rangeBoundsIso(range);
-    const prev = rangeBoundsIso(prevR);
+    const prev = rangeBoundsIso(prevRange);
 
     const [
       salesQ,
@@ -70,7 +93,6 @@ export default function DRE() {
       prevReceivedQ,
       invQ,
     ] = await Promise.all([
-      // Inclui canceladas pra mostrar "Vendas brutas - Cancelamentos"
       supabase
         .from("sales")
         .select("quantity,total,canceled_at")
@@ -81,13 +103,11 @@ export default function DRE() {
         .select("amount")
         .gte("paid_at", cur.startIso)
         .lt("paid_at", cur.endIso),
-      // Recebido = sale_payments.paid_at no período (regime de caixa)
       supabase
         .from("sale_payments")
         .select("amount")
         .gte("paid_at", cur.startIso)
         .lt("paid_at", cur.endIso),
-      // Pagamentos por método pra calcular taxas de cartão.
       supabase
         .from("sale_payments")
         .select("amount,payment_method_id")
@@ -98,10 +118,9 @@ export default function DRE() {
         .select("id,name,fee_percent,fee_fixed"),
       supabase
         .from("sales")
-        .select("total")
+        .select("quantity,total,canceled_at")
         .gte("created_at", prev.startIso)
-        .lt("created_at", prev.endIso)
-        .is("canceled_at", null),
+        .lt("created_at", prev.endIso),
       supabase
         .from("expenses")
         .select("amount")
@@ -112,8 +131,6 @@ export default function DRE() {
         .select("amount")
         .gte("paid_at", prev.startIso)
         .lt("paid_at", prev.endIso),
-      // Pega TODAS as entradas (não só do período) pra montar o estoque
-      // FIFO até a data de início do período.
       supabase
         .from("inventory_movements")
         .select("kind,quantity,unit_cost,created_at")
@@ -155,13 +172,8 @@ export default function DRE() {
         fee_fixed: m.fee_fixed === null ? null : Number(m.fee_fixed),
       }))
     );
-    setPrevSalesTotal(
-      ((prevSalesQ.data as { total: number | string }[]) ?? []).reduce(
-        (s, r) => s + Number(r.total ?? 0),
-        0
-      )
-    );
-    setPrevExpenses(
+    setPrevSalesAll((prevSalesQ.data as Sale[]) ?? []);
+    setPrevExpensesTotal(
       ((prevExpQ.data as { amount: number | string }[]) ?? []).reduce(
         (s, r) => s + Number(r.amount ?? 0),
         0
@@ -180,34 +192,16 @@ export default function DRE() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preset]);
+  }, [month]);
 
-  // CMV por período via FIFO simplificado.
-  //
-  // Modelo: monto uma fila de "lotes" usando todas as entradas com
-  // unit_cost preenchido (em ordem cronológica). Calculo quantos cocos
-  // foram vendidos ANTES do período (pra avançar a fila) e quantos
-  // foram vendidos DENTRO do período (pra extrair o custo).
-  //
-  // Limitações conhecidas:
-  // - Vendas com canceled_at IS NOT NULL não são consideradas (não
-  //   consumiram lote físico).
-  // - Não diferencia perdas de vendas (perdas também consomem lote, mas
-  //   não geram receita). Aceitável pra esta versão.
+  // CMV via custo médio das entradas do período (fallback histórico).
   const cmvPeriodo = useMemo(() => {
     if (invMovements.length === 0)
-      return { custo: 0, custoUnitMedio: 0, semCusto: false };
-    // Cocos vendidos no período (sem canceladas)
+      return { custo: 0, custoUnitMedio: 0, semCusto: false, fonteHistorica: false };
     const cocosNoPeriodo = salesAll
       .filter((s) => !s.canceled_at)
       .reduce((s, r) => s + Number(r.quantity ?? 0), 0);
 
-    // Cocos vendidos antes do período: precisamos de uma query
-    // adicional. Pra evitar complexidade, aproximamos: assumimos que o
-    // CMV usa uma janela "do início do período até hoje" — ou seja,
-    // pegamos o custo médio das entradas DO período em diante, com
-    // fallback pro custo médio histórico se não houver entrada no
-    // período.
     const startMs = new Date(rangeBoundsIso(range).startIso).getTime();
     const entriesInPeriod = invMovements.filter(
       (m) =>
@@ -224,8 +218,6 @@ export default function DRE() {
         cost += Number(m.quantity) * Number(m.unit_cost);
       }
     } else {
-      // Fallback: usa custo médio histórico de TODAS as entradas com
-      // unit_cost. Marca o usuário pra ele saber que CMV é estimativa.
       for (const m of invMovements) {
         if (m.unit_cost && Number(m.unit_cost) > 0) {
           qty += Number(m.quantity);
@@ -243,7 +235,7 @@ export default function DRE() {
     };
   }, [invMovements, salesAll, range]);
 
-  // Taxas de operadora (cartão) sobre os pagamentos do período.
+  // Taxas de operadora sobre pagamentos do período.
   const taxasOperadora = useMemo(() => {
     const methodMap: Record<string, MethodRow> = {};
     methods.forEach((m) => (methodMap[m.id] = m));
@@ -263,7 +255,7 @@ export default function DRE() {
       (s, r) => s + Number(r.total ?? 0),
       0
     );
-    const cancelamentos = canceladas.reduce(
+    const devolucoes = canceladas.reduce(
       (s, r) => s + Number(r.total ?? 0),
       0
     );
@@ -278,62 +270,83 @@ export default function DRE() {
     const cmv = cmvPeriodo.custo;
     const margemBruta = receitaLiquida - cmv;
     const despesas = expenses.reduce((s, r) => s + Number(r.amount ?? 0), 0);
-    const resultadoLiquido = margemBruta - despesas - taxasOperadora;
+    // EBITDA ≈ Margem Bruta − Despesas Operacionais (sem taxas financeiras)
+    const ebitda = margemBruta - despesas;
+    const resultadoLiquido = ebitda - taxasOperadora;
     return {
       receitaBruta,
-      cancelamentos,
+      devolucoes,
       receitaLiquida,
       cocosVendidos,
       cmv,
       margemBruta,
       despesas,
+      ebitda,
       taxasOperadora,
       resultadoLiquido,
       received,
     };
   }, [salesAll, expenses, cmvPeriodo, taxasOperadora, received]);
 
-  const presetLabel =
-    DASHBOARD_PRESETS.find((p) => p.id === preset)?.label ?? "";
-
-  const dRecLiquida = pctChange(data.receitaLiquida, prevSalesTotal);
-  const dResultado = pctChange(
-    data.resultadoLiquido,
-    prevReceived - prevExpenses
-  );
+  // Valores do mês anterior para deltas.
+  const prevData = useMemo(() => {
+    const ativas = prevSalesAll.filter((s) => !s.canceled_at);
+    const canceladas = prevSalesAll.filter((s) => s.canceled_at);
+    const receitaBruta = prevSalesAll.reduce(
+      (s, r) => s + Number(r.total ?? 0),
+      0
+    );
+    const devolucoes = canceladas.reduce(
+      (s, r) => s + Number(r.total ?? 0),
+      0
+    );
+    const receitaLiquida = ativas.reduce(
+      (s, r) => s + Number(r.total ?? 0),
+      0
+    );
+    const margemBruta = receitaLiquida; // CMV do mês anterior não calculado (simplificado)
+    const ebitda = margemBruta - prevExpensesTotal;
+    const resultadoLiquido = ebitda; // sem taxas prev (simplificado)
+    return { receitaBruta, devolucoes, receitaLiquida, margemBruta, ebitda, resultadoLiquido };
+  }, [prevSalesAll, prevExpensesTotal, prevReceived]);
 
   return (
-    <div className="space-y-6">
-      <header className="flex items-start justify-between flex-wrap gap-3">
+    <div className="space-y-6 print:space-y-4">
+      <header className="flex items-start justify-between flex-wrap gap-3 print:gap-1">
         <div>
           <Link
             href="/financeiro"
-            className="text-coco-700 underline text-sm"
+            className="text-coco-700 underline text-sm print:hidden"
           >
             ← Financeiro
           </Link>
-          <h1 className="text-3xl font-bold text-coco-900">
-            DRE — Demonstrativo de Resultado
+          <h1 className="text-3xl font-bold text-coco-900 print:text-2xl">
+            DRE — Demonstrativo de Resultados
           </h1>
-          <p className="text-coco-600">
-            Período: <strong>{presetLabel}</strong>. CMV usa o custo médio
-            ponderado das entradas registradas.
+          <p className="text-coco-600 capitalize">
+            {fmtMonth(month)}
           </p>
         </div>
-        <div className="flex flex-wrap gap-1 bg-coco-50 p-1 rounded-xl">
-          {DASHBOARD_PRESETS.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => setPreset(p.id)}
-              className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
-                preset === p.id
-                  ? "bg-white text-coco-900 shadow-sm font-semibold"
-                  : "text-coco-700 hover:bg-white/60"
-              }`}
-            >
-              {p.label}
-            </button>
-          ))}
+        <div className="flex items-center gap-2 print:hidden">
+          <div>
+            <label className="label">Mês de referência</label>
+            <input
+              type="month"
+              value={month}
+              onChange={(e) => setMonth(e.target.value)}
+              className="input"
+              max={currentMonthValue()}
+            />
+          </div>
+          <button
+            onClick={() => window.print()}
+            className="btn-secondary self-end"
+          >
+            🖨 Imprimir
+          </button>
+        </div>
+        <div className="hidden print:block text-sm text-coco-600">
+          Emitido em {new Date().toLocaleDateString("pt-BR")}
         </div>
       </header>
 
@@ -341,94 +354,134 @@ export default function DRE() {
         <p className="text-coco-700">Carregando…</p>
       ) : (
         <>
-          <div className="card">
+          <div className="card print:shadow-none print:border print:border-coco-200">
             <table className="w-full text-sm">
+              <thead className="print:table-header-group">
+                <tr className="text-xs text-coco-500 uppercase border-b border-coco-100">
+                  <th className="text-left pb-2 font-medium">Linha</th>
+                  <th className="text-right pb-2 font-medium">{fmtMonth(month)}</th>
+                  <th className="text-right pb-2 font-medium text-coco-400">
+                    {fmtMonth(prevYm)}
+                  </th>
+                  <th className="text-right pb-2 font-medium text-coco-400">Δ</th>
+                </tr>
+              </thead>
               <tbody>
-                <Row label="Receita bruta" value={data.receitaBruta} />
-                <Row
-                  label="(−) Cancelamentos"
-                  value={-data.cancelamentos}
+                <CompRow
+                  label="Receita bruta"
+                  value={data.receitaBruta}
+                  prev={prevData.receitaBruta}
+                />
+                <CompRow
+                  label="(−) Devoluções / cancelamentos"
+                  value={-data.devolucoes}
+                  prev={-prevData.devolucoes}
                   faded
                 />
-                <Row
+                <CompRow
                   label="Receita líquida"
                   value={data.receitaLiquida}
+                  prev={prevData.receitaLiquida}
                   bold
                   divider
-                  delta={dRecLiquida}
                 />
-                <Row
-                  label={`(−) CMV · ${data.cocosVendidos} cocos × ${brl(
-                    cmvPeriodo.custoUnitMedio
-                  )}`}
+                <CompRow
+                  label={`(−) CMV · ${data.cocosVendidos} cocos × ${brl(cmvPeriodo.custoUnitMedio)}`}
                   value={-data.cmv}
+                  prev={null}
                   faded
                 />
-                <Row
+                <CompRow
                   label="Margem bruta"
                   value={data.margemBruta}
+                  prev={prevData.margemBruta}
                   bold
                   divider
                 />
-                <Row
+                <CompRow
                   label="(−) Despesas operacionais"
                   value={-data.despesas}
+                  prev={-prevExpensesTotal}
                   faded
                 />
-                <Row
+                <CompRow
+                  label="EBITDA"
+                  value={data.ebitda}
+                  prev={prevData.ebitda}
+                  bold
+                  divider
+                />
+                <CompRow
                   label="(−) Taxas de operadora (cartão)"
                   value={-data.taxasOperadora}
+                  prev={null}
                   faded
                 />
-                <Row
+                <CompRow
                   label="Resultado líquido"
                   value={data.resultadoLiquido}
+                  prev={prevData.resultadoLiquido}
                   hero
                   divider
-                  delta={dResultado}
                 />
               </tbody>
             </table>
           </div>
 
-          <div className="card text-sm space-y-2 bg-coco-50">
+          {/* KPIs */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 print:grid-cols-4 print:gap-2">
+            <KpiCard
+              label="Receita líquida"
+              value={brl(data.receitaLiquida)}
+              sub={`vs ${brl(prevData.receitaLiquida)} mês ant.`}
+              delta={pctChange(data.receitaLiquida, prevData.receitaLiquida)}
+            />
+            <KpiCard
+              label="Margem bruta"
+              value={data.receitaLiquida > 0 ? `${((data.margemBruta / data.receitaLiquida) * 100).toFixed(1)}%` : "—"}
+              sub={brl(data.margemBruta)}
+            />
+            <KpiCard
+              label="EBITDA"
+              value={brl(data.ebitda)}
+              sub={data.receitaLiquida > 0 ? `${((data.ebitda / data.receitaLiquida) * 100).toFixed(1)}% da receita` : ""}
+              delta={pctChange(data.ebitda, prevData.ebitda)}
+            />
+            <KpiCard
+              label="Resultado líquido"
+              value={brl(data.resultadoLiquido)}
+              sub={`vs ${brl(prevData.resultadoLiquido)} mês ant.`}
+              delta={pctChange(data.resultadoLiquido, prevData.resultadoLiquido)}
+              highlight
+            />
+          </div>
+
+          <div className="card text-sm space-y-2 bg-coco-50 print:bg-white print:border print:border-coco-200">
             <h3 className="font-bold text-coco-900">Notas</h3>
             <p>
-              <strong>Regime:</strong> competência (receita = vendas
-              criadas no período, independente de quando foram pagas).
+              <strong>Regime:</strong> competência (receita = vendas criadas no
+              mês, independente de quando foram pagas).
             </p>
             <p>
               <strong>Recebido (caixa):</strong>{" "}
-              <span className="font-semibold">{brl(data.received)}</span>{" "}
-              entrou efetivamente no período. Compare com receita líquida
-              ({brl(data.receitaLiquida)}) pra ver gap de cobrança.
+              <span className="font-semibold">{brl(data.received)}</span> entrou
+              efetivamente no mês. Compare com receita líquida (
+              {brl(data.receitaLiquida)}) pra ver gap de cobrança.
             </p>
             <p>
               <strong>CMV:</strong>{" "}
               {cmvPeriodo.fonteHistorica
                 ? "calculado com custo médio histórico (não houve entrada no período)."
-                : "calculado com custo médio das entradas do próprio período."}
+                : "calculado com custo médio das entradas do próprio mês."}
             </p>
-            {data.taxasOperadora > 0 && (
-              <p>
-                <strong>Taxas:</strong> a taxa total de R${" "}
-                {data.taxasOperadora.toFixed(2)} foi calculada sobre os{" "}
-                pagamentos do período usando{" "}
-                <code>fee_percent</code> e <code>fee_fixed</code> de cada{" "}
-                forma de pagamento. Edite em{" "}
-                <Link
-                  href="/formas-pagamento"
-                  className="underline"
-                >
-                  Formas de Pagamento
-                </Link>
-                .
-              </p>
-            )}
+            <p>
+              <strong>EBITDA:</strong> Margem Bruta menos Despesas Operacionais,
+              antes de taxas financeiras e encargos de cartão.
+            </p>
             {cmvPeriodo.semCusto && (
               <p className="text-amber-800">
-                ⚠ Sem custo unitário registrado — preencha "Custo
-                unitário" nas entradas em{" "}
+                ⚠ Sem custo unitário registrado — preencha "Custo unitário" nas
+                entradas em{" "}
                 <Link href="/estoque" className="underline">
                   /estoque
                 </Link>{" "}
@@ -438,49 +491,118 @@ export default function DRE() {
           </div>
         </>
       )}
+
+      <style jsx global>{`
+        @media print {
+          nav, aside, .print\\:hidden { display: none !important; }
+          body { background: white; }
+          .card { box-shadow: none; }
+        }
+      `}</style>
     </div>
   );
 }
 
-function Row({
+function CompRow({
   label,
   value,
+  prev,
   bold,
   hero,
   faded,
   divider,
-  delta,
 }: {
   label: string;
   value: number;
+  prev: number | null;
   bold?: boolean;
   hero?: boolean;
   faded?: boolean;
   divider?: boolean;
-  delta?: number | null;
 }) {
-  const cls =
-    hero
-      ? "py-3 text-2xl font-bold"
-      : bold
-      ? "py-2 font-semibold"
-      : "py-1";
+  const cls = hero
+    ? "py-3 text-2xl font-bold"
+    : bold
+    ? "py-2 font-semibold"
+    : "py-1";
   const valColor = value < 0 ? "text-red-700" : "text-coco-900";
+  const delta = prev !== null ? pctChange(value, prev) : null;
+
   return (
     <tr className={divider ? "border-t border-coco-200" : ""}>
-      <td className={`${cls} ${faded ? "text-coco-600" : ""}`}>{label}</td>
-      <td className={`${cls} text-right ${valColor}`}>
+      <td className={`${cls} ${faded ? "text-coco-500" : ""} pr-4`}>
+        {label}
+      </td>
+      <td className={`${cls} text-right ${valColor} whitespace-nowrap`}>
         {brl(value)}
-        {delta !== undefined && delta !== null && (
+      </td>
+      <td className={`${cls} text-right text-coco-400 whitespace-nowrap`}>
+        {prev !== null ? brl(prev) : "—"}
+      </td>
+      <td className="text-right whitespace-nowrap pl-2">
+        {delta !== null && delta !== undefined ? (
           <span
-            className={`ml-2 text-xs ${
+            className={`text-xs font-medium ${
               delta >= 0 ? "text-green-700" : "text-red-700"
             }`}
           >
             {fmtPct(delta)}
           </span>
+        ) : (
+          <span className="text-xs text-coco-300">—</span>
         )}
       </td>
     </tr>
+  );
+}
+
+function KpiCard({
+  label,
+  value,
+  sub,
+  delta,
+  highlight,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  delta?: number | null;
+  highlight?: boolean;
+}) {
+  return (
+    <div
+      className={`card ${
+        highlight ? "bg-coco-900 text-white" : ""
+      } print:border print:border-coco-200 print:shadow-none`}
+    >
+      <div
+        className={`text-xs uppercase tracking-wider mb-1 ${
+          highlight ? "text-coco-300" : "text-coco-600"
+        }`}
+      >
+        {label}
+      </div>
+      <div className={`text-xl font-bold ${highlight ? "text-white" : "text-coco-900"}`}>
+        {value}
+      </div>
+      {sub && (
+        <div
+          className={`text-xs mt-0.5 ${
+            highlight ? "text-coco-400" : "text-coco-500"
+          }`}
+        >
+          {sub}
+        </div>
+      )}
+      {delta !== null && delta !== undefined && (
+        <div
+          className={`text-xs font-medium mt-1 ${
+            delta >= 0 ? "text-green-400" : "text-red-400"
+          }`}
+        >
+          {fmtPct(delta)} vs mês ant.
+        </div>
+      )}
+    </div>
   );
 }
