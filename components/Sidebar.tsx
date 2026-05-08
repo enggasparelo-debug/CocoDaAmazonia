@@ -29,6 +29,7 @@ const items: NavItem[] = [
   { href: "/financeiro", label: "Financeiro", icon: "💰", roles: ["admin"] },
   { href: "/operadores", label: "Operadores", icon: "🧑‍💼", roles: ["admin"] },
   { href: "/relatorios", label: "Relatórios", icon: "📈", roles: ["admin"] },
+  { href: "/exportar", label: "Exportar Contador", icon: "📤", roles: ["admin"] },
   { href: "/configuracoes", label: "Configurações", icon: "⚙️", roles: ["admin"] },
   { href: "/auditoria", label: "Auditoria", icon: "🔍", roles: ["admin"] },
 ];
