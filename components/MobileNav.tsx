@@ -6,6 +6,7 @@ import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { useTenant } from "@/lib/useTenant";
+import { useDespesasAlert } from "@/lib/useDespesasAlert";
 
 type Role = "admin" | "operador";
 type NavItem = {
@@ -43,6 +44,7 @@ export default function MobileNav() {
   const role: Role = (membership?.role ?? "operador") as Role;
   const visible = items.filter((i) => i.roles.includes(role));
   const quickHref = isAdmin ? "/vendas" : "/carga";
+  const despesasAlert = useDespesasAlert();
 
   async function logout() {
     await supabase.auth.signOut();
@@ -96,7 +98,12 @@ export default function MobileNav() {
                     }`}
                   >
                     <span className="text-lg">{it.icon}</span>
-                    <span>{it.label}</span>
+                    <span className="flex-1">{it.label}</span>
+                    {it.href === "/despesas" && despesasAlert > 0 && (
+                      <span className="bg-red-500 text-white text-xs font-bold rounded-full px-1.5 py-0.5 min-w-[20px] text-center">
+                        {despesasAlert}
+                      </span>
+                    )}
                   </Link>
                 );
               })}
