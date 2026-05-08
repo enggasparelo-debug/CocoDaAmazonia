@@ -253,7 +253,7 @@ export default function FluxoCaixaPage() {
   const [loading, setLoading] = useState(true);
 
   type SalePayment = { paid_at: string; amount: number };
-  type ExpenseRow = { paid_at: string; amount: number };
+  type ExpenseRow = { paid_at: string | null; due_date: string | null; status: string; amount: number };
   type PayableRow = { due_date: string; amount: number; status: string };
   type BalanceRow = { open_balance: number };
 
@@ -268,7 +268,7 @@ export default function FluxoCaixaPage() {
     const start = addDays(today, -lookbackDays);
     const projEnd = addDays(today, projDays);
 
-    const [spRes, expRes, payRes, balRes] = await Promise.all([
+    const [spRes, expPaidRes, expOpenRes, payRes, balRes] = await Promise.all([
       supabase
         .from("sale_payments")
         .select("paid_at, amount")
@@ -276,9 +276,15 @@ export default function FluxoCaixaPage() {
         .lte("paid_at", isoEnd(today)),
       supabase
         .from("expenses")
-        .select("paid_at, amount")
+        .select("paid_at, due_date, status, amount")
+        .eq("status", "paid")
         .gte("paid_at", isoStart(start))
         .lte("paid_at", isoEnd(today)),
+      supabase
+        .from("expenses")
+        .select("paid_at, due_date, status, amount")
+        .eq("status", "open")
+        .lte("due_date", projEnd),
       supabase
         .from("payables")
         .select("due_date, amount, status")
@@ -287,8 +293,13 @@ export default function FluxoCaixaPage() {
       supabase.from("customer_balances").select("open_balance"),
     ]);
 
+    const allExpenses = [
+      ...((expPaidRes.data as ExpenseRow[]) ?? []),
+      ...((expOpenRes.data as ExpenseRow[]) ?? []),
+    ];
+
     setSalePayments((spRes.data as SalePayment[]) ?? []);
-    setExpenses((expRes.data as ExpenseRow[]) ?? []);
+    setExpenses(allExpenses);
     setPayables((payRes.data as PayableRow[]) ?? []);
     const totalAR = ((balRes.data as BalanceRow[]) ?? []).reduce(
       (s, r) => s + Number(r.open_balance ?? 0),
@@ -323,15 +334,22 @@ export default function FluxoCaixaPage() {
       realEntradas[d] = (realEntradas[d] ?? 0) + Number(p.amount);
     });
     expenses.forEach((e) => {
-      const d = e.paid_at.slice(0, 10);
-      realSaidas[d] = (realSaidas[d] ?? 0) + Number(e.amount);
+      if (e.status === "paid" && e.paid_at) {
+        const d = e.paid_at.slice(0, 10);
+        realSaidas[d] = (realSaidas[d] ?? 0) + Number(e.amount);
+      }
     });
 
-    // aggregate projected
+    // aggregate projected (payables + open expenses with future due_date)
     const projSaidas: Record<string, number> = {};
     payables.forEach((p) => {
       if (p.due_date > today) {
         projSaidas[p.due_date] = (projSaidas[p.due_date] ?? 0) + Number(p.amount);
+      }
+    });
+    expenses.forEach((e) => {
+      if (e.status === "open" && e.due_date && e.due_date > today) {
+        projSaidas[e.due_date] = (projSaidas[e.due_date] ?? 0) + Number(e.amount);
       }
     });
     // spread AR evenly across projection days (rough estimate)

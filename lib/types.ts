@@ -138,13 +138,17 @@ export type CashMovement = {
   created_at: string;
 };
 
+export type ExpenseStatus = "open" | "paid";
+
 export type Expense = {
   id: string;
   tenant_id: string;
   description: string;
   category: string | null;
   amount: number;
-  paid_at: string;
+  due_date: string | null;
+  status: ExpenseStatus;
+  paid_at: string | null;
   payment_method_id: string | null;
   notes: string | null;
   carga_id?: string | null;
