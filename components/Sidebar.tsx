@@ -22,6 +22,7 @@ const items: NavItem[] = [
   { href: "/clientes", label: "Clientes", icon: "👥", roles: ["admin", "operador"] },
   { href: "/formas-pagamento", label: "Formas de Pagamento", icon: "💳", roles: ["admin"] },
   { href: "/receber", label: "Contas a Receber", icon: "📒", roles: ["admin"] },
+  { href: "/pagar", label: "Contas a Pagar", icon: "🧾", roles: ["admin"] },
   { href: "/caixa", label: "Caixa", icon: "💵", roles: ["admin"] },
   { href: "/despesas", label: "Despesas", icon: "💸", roles: ["admin"] },
   { href: "/estoque", label: "Estoque", icon: "📦", roles: ["admin"] },
