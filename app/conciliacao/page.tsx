@@ -8,7 +8,7 @@ import type { BankAccount, BankReconciliation } from "@/lib/types";
 import { useToast } from "@/components/Toast";
 
 const BANKS = [
-  "Sicoob", "Sicredi", "Bradesco", "Itaú", "Banco do Brasil",
+  "Sicoob", "Sicredi", "Credisis", "Bradesco", "Itaú", "Banco do Brasil",
   "Caixa Econômica Federal", "Santander", "Nubank", "Inter",
   "BTG Pactual", "C6 Bank", "XP", "Outro",
 ];

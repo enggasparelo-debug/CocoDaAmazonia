@@ -71,6 +71,20 @@ create policy "tenant_isolation_bank_reconciliation_items"
   on public.bank_reconciliation_items
   using (tenant_id in (select public.user_tenants()));
 
+-- ─── Triggers (set_tenant_id automático no insert) ──────────
+
+drop trigger if exists trg_set_tenant_id on public.bank_accounts;
+create trigger trg_set_tenant_id before insert on public.bank_accounts
+  for each row execute function public.set_tenant_id();
+
+drop trigger if exists trg_set_tenant_id on public.bank_reconciliations;
+create trigger trg_set_tenant_id before insert on public.bank_reconciliations
+  for each row execute function public.set_tenant_id();
+
+drop trigger if exists trg_set_tenant_id on public.bank_reconciliation_items;
+create trigger trg_set_tenant_id before insert on public.bank_reconciliation_items
+  for each row execute function public.set_tenant_id();
+
 -- ─── Índices ─────────────────────────────────────────────────
 
 create index if not exists bank_accounts_tenant_idx
