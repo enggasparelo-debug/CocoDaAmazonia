@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { useTenant } from "@/lib/useTenant";
 import { useDespesasAlert } from "@/lib/useDespesasAlert";
+import { usePayablesAlert } from "@/lib/usePayablesAlert";
 
 type Role = "admin" | "operador";
 type NavItem = {
@@ -46,6 +47,7 @@ export default function MobileNav() {
   const visible = items.filter((i) => i.roles.includes(role));
   const quickHref = isAdmin ? "/vendas" : "/carga";
   const despesasAlert = useDespesasAlert();
+  const payablesAlert = usePayablesAlert();
 
   async function logout() {
     await supabase.auth.signOut();
@@ -103,6 +105,11 @@ export default function MobileNav() {
                     {it.href === "/despesas" && despesasAlert > 0 && (
                       <span className="bg-red-500 text-white text-xs font-bold rounded-full px-1.5 py-0.5 min-w-[20px] text-center">
                         {despesasAlert}
+                      </span>
+                    )}
+                    {it.href === "/pagar" && payablesAlert > 0 && (
+                      <span className="bg-red-500 text-white text-xs font-bold rounded-full px-1.5 py-0.5 min-w-[20px] text-center">
+                        {payablesAlert}
                       </span>
                     )}
                   </Link>

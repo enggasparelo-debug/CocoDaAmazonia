@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useEffect, useState } from "react";
 import { useTenant } from "@/lib/useTenant";
 import { useDespesasAlert } from "@/lib/useDespesasAlert";
+import { usePayablesAlert } from "@/lib/usePayablesAlert";
 
 type Role = "admin" | "operador";
 type NavItem = {
@@ -59,6 +60,7 @@ export default function Sidebar() {
   const role: Role = (membership?.role ?? "operador") as Role;
   const visible = items.filter((i) => i.roles.includes(role));
   const despesasAlert = useDespesasAlert();
+  const payablesAlert = usePayablesAlert();
 
   return (
     <aside className="w-60 bg-coco-800 text-coco-50 hidden md:flex flex-col py-6 px-4 sticky top-0 h-screen">
@@ -87,6 +89,11 @@ export default function Sidebar() {
               {it.href === "/despesas" && despesasAlert > 0 && (
                 <span className="bg-red-500 text-white text-xs font-bold rounded-full px-1.5 py-0.5 min-w-[20px] text-center">
                   {despesasAlert}
+                </span>
+              )}
+              {it.href === "/pagar" && payablesAlert > 0 && (
+                <span className="bg-red-500 text-white text-xs font-bold rounded-full px-1.5 py-0.5 min-w-[20px] text-center">
+                  {payablesAlert}
                 </span>
               )}
             </Link>

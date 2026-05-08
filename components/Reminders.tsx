@@ -55,6 +55,25 @@ export default function Reminders() {
         });
       }
 
+      // contas a pagar vencidas ou vencendo hoje
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const { data: overduePay, count: overduePayCount } = await supabase
+        .from("payables")
+        .select("id, amount", { count: "exact" })
+        .in("status", ["pendente", "vencido"])
+        .lte("due_date", todayStr);
+      if (overduePayCount && overduePayCount > 0) {
+        const total = (overduePay ?? []).reduce(
+          (s: number, p: { amount: number }) => s + Number(p.amount),
+          0
+        );
+        list.push({
+          kind: "danger",
+          msg: `🧾 ${overduePayCount} conta(s) a pagar vencida(s) — R$ ${total.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}.`,
+          href: "/pagar",
+        });
+      }
+
       // fiado vencido > 60d
       const { data: aging } = await supabase
         .from("customer_balances")
