@@ -324,3 +324,22 @@ export type BankReconciliationItem = {
   status: BankReconciliationItemStatus;
   created_at: string;
 };
+
+export type PayableStatus = "pendente" | "pago" | "vencido" | "cancelado";
+
+export type Payable = {
+  id: string;
+  tenant_id: string;
+  supplier_name: string;
+  description: string;
+  amount: number;
+  due_date: string;
+  paid_at: string | null;
+  paid_amount: number | null;
+  status: PayableStatus;
+  category: string | null;
+  notes: string | null;
+  recurrent: boolean;
+  created_at: string;
+  created_by: string | null;
+};
