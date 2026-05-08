@@ -25,6 +25,7 @@ const items: NavItem[] = [
   { href: "/receber", label: "Contas a Receber", icon: "📒", roles: ["admin"] },
   { href: "/caixa", label: "Caixa", icon: "💵", roles: ["admin"] },
   { href: "/despesas", label: "Despesas", icon: "💸", roles: ["admin"] },
+  { href: "/conciliacao", label: "Conciliação Bancária", icon: "🏦", roles: ["admin"] },
   { href: "/estoque", label: "Estoque", icon: "📦", roles: ["admin"] },
   { href: "/financeiro", label: "Financeiro", icon: "💰", roles: ["admin"] },
   { href: "/operadores", label: "Operadores", icon: "🧑‍💼", roles: ["admin"] },
