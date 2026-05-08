@@ -134,7 +134,7 @@ export default function ConciliacaoPage() {
                 </div>
                 <div className="flex gap-1 shrink-0">
                   <button
-                    onClick={() => setEditing({ ...acc })}
+                    onClick={() => setEditing({ id: acc.id, name: acc.name, bank_name: acc.bank_name, account_number: acc.account_number ?? undefined, agency: acc.agency ?? undefined, notes: acc.notes ?? undefined })}
                     className="btn-ghost text-xs"
                     title="Editar"
                   >
