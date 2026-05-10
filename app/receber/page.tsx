@@ -1,9 +1,9 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { brl, fmtDate, fmtDateOnly } from "@/lib/format";
+import { brl, fmtDateOnly } from "@/lib/format";
 import { nowLocalIso } from "@/lib/datetime";
 import { downloadCsv, downloadXlsx, rowsToCsv } from "@/lib/export";
 import { cobrancaMessage, waLink } from "@/lib/whatsapp";
@@ -14,6 +14,17 @@ import type {
   PaymentMethod,
   Sale,
 } from "@/lib/types";
+
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function firstOfMonthIso() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+}
+
+type StatusTab = "abertas" | "vencidas" | "pagas" | "todas";
 
 export default function ReceberPage() {
   return (
@@ -33,8 +44,7 @@ function ReceberInner() {
   const [balances, setBalances] = useState<CustomerBalance[]>([]);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
   const [selected, setSelected] = useState<string>(initialCustomer);
-  const [openSales, setOpenSales] = useState<Sale[]>([]);
-  // Todas as vendas em aberto do tenant — usado pra aging por venda.
+  const [sales, setSales] = useState<Sale[]>([]);
   const [allOpenSales, setAllOpenSales] = useState<
     { id: string; created_at: string; total: number; paid_amount: number }[]
   >([]);
@@ -45,8 +55,10 @@ function ReceberInner() {
   const [payNotes, setPayNotes] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
 
-  // Receber em lote: distribui um único pagamento entre as vendas mais
-  // antigas (FIFO).
+  const [dateFrom, setDateFrom] = useState<string>(firstOfMonthIso());
+  const [dateTo, setDateTo] = useState<string>(todayIso());
+  const [statusTab, setStatusTab] = useState<StatusTab>("abertas");
+
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkAmount, setBulkAmount] = useState<number>(0);
   const [bulkMethod, setBulkMethod] = useState<string>("");
@@ -69,7 +81,6 @@ function ReceberInner() {
         .eq("active", true)
         .eq("is_credit", false)
         .order("name"),
-      // Todas vendas em aberto do tenant pra aging por venda.
       supabase
         .from("sales")
         .select("id,created_at,total,paid_amount")
@@ -90,43 +101,60 @@ function ReceberInner() {
     if (m.data && m.data.length > 0) setPayMethod(m.data[0].id);
   }
 
-  async function loadSales(custId: string) {
-    if (!custId) {
-      setOpenSales([]);
-      return;
-    }
-    const { data } = await supabase
-      .from("sales")
-      .select("*")
-      .eq("customer_id", custId)
-      .neq("status", "paga")
-      .order("created_at", { ascending: true });
-    setOpenSales((data as Sale[]) ?? []);
-  }
+  const loadSales = useCallback(
+    async (custId: string, tab: StatusTab, from: string, to: string) => {
+      if (!custId) {
+        setSales([]);
+        return;
+      }
+
+      let query = supabase
+        .from("sales")
+        .select("*")
+        .eq("customer_id", custId)
+        .is("canceled_at", null)
+        .order("created_at", { ascending: true });
+
+      if (from) query = query.gte("created_at", `${from}T00:00:00`);
+      if (to) query = query.lte("created_at", `${to}T23:59:59`);
+
+      if (tab === "pagas") {
+        query = query.eq("status", "paga");
+      } else if (tab !== "todas") {
+        query = query.neq("status", "paga");
+      }
+
+      const { data } = await query;
+      let rows = (data as Sale[]) ?? [];
+
+      if (tab === "vencidas") {
+        const cutoff = Date.now() - 30 * 86400000;
+        rows = rows.filter(
+          (s) => new Date(s.created_at).getTime() < cutoff
+        );
+      }
+
+      setSales(rows);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
 
   useEffect(() => {
     loadAll();
   }, []);
 
   useEffect(() => {
-    loadSales(selected);
-  }, [selected]);
+    loadSales(selected, statusTab, dateFrom, dateTo);
+  }, [selected, statusTab, dateFrom, dateTo, loadSales]);
 
   const totalOpen = useMemo(
     () => balances.reduce((s, b) => s + Number(b.open_balance), 0),
     [balances]
   );
 
-  // Aging por VENDA — cada venda em aberto cai no bucket da própria
-  // idade (não da venda mais antiga do cliente). Métrica fiel da
-  // exposição real.
   const aging = useMemo(() => {
-    const buckets = {
-      ate30: 0,
-      d31_60: 0,
-      d61_90: 0,
-      mais90: 0,
-    };
+    const buckets = { ate30: 0, d31_60: 0, d61_90: 0, mais90: 0 };
     const now = Date.now();
     for (const s of allOpenSales) {
       const remaining = +(s.total - s.paid_amount).toFixed(2);
@@ -141,6 +169,12 @@ function ReceberInner() {
     }
     return buckets;
   }, [allOpenSales]);
+
+  // Only open/partial sales for bulk payment
+  const openSales = useMemo(
+    () => sales.filter((s) => s.status !== "paga"),
+    [sales]
+  );
 
   function startPay(s: Sale) {
     setPayingSale(s);
@@ -175,12 +209,9 @@ function ReceberInner() {
     }
     setPayingSale(null);
     await loadAll();
-    await loadSales(selected);
+    await loadSales(selected, statusTab, dateFrom, dateTo);
   }
 
-  // Distribui bulkAmount entre openSales por ordem cronológica (FIFO),
-  // gerando 1 sale_payment por venda atingida. Para na primeira venda
-  // que sobrar resíduo (ela fica parcial).
   function openBulk() {
     setBulkAmount(
       openSales.reduce(
@@ -213,7 +244,6 @@ function ReceberInner() {
       paid_at: string;
       notes: string | null;
     }[] = [];
-    // openSales já vem ordenado por created_at asc.
     for (const s of openSales) {
       if (remaining <= 0) break;
       const rest = +(Number(s.total) - Number(s.paid_amount)).toFixed(2);
@@ -242,7 +272,7 @@ function ReceberInner() {
     }
     setBulkOpen(false);
     await loadAll();
-    await loadSales(selected);
+    await loadSales(selected, statusTab, dateFrom, dateTo);
   }
 
   function buildAgingRows() {
@@ -264,6 +294,93 @@ function ReceberInner() {
         };
       });
   }
+
+  function handlePrint() {
+    const cust = customers.find((c) => c.id === selected);
+    const bal = balances.find((b) => b.customer_id === selected);
+    if (!cust) return;
+
+    const totalSales = sales.reduce((s, x) => s + Number(x.total), 0);
+    const totalPaid = sales.reduce((s, x) => s + Number(x.paid_amount), 0);
+    const totalPending = totalSales - totalPaid;
+
+    const rows = sales
+      .map(
+        (s) => `
+        <tr>
+          <td>${fmtDateOnly(s.created_at)}</td>
+          <td>${s.status === "paga" ? "Paga" : new Date(s.created_at).getTime() < Date.now() - 30 * 86400000 ? "Vencida" : "Aberta"}</td>
+          <td style="text-align:right">${brl(Number(s.total))}</td>
+          <td style="text-align:right">${brl(Number(s.paid_amount))}</td>
+          <td style="text-align:right">${brl(Number(s.total) - Number(s.paid_amount))}</td>
+        </tr>`
+      )
+      .join("");
+
+    const periodo =
+      dateFrom && dateTo
+        ? `${fmtDateOnly(dateFrom + "T00:00:00")} a ${fmtDateOnly(dateTo + "T00:00:00")}`
+        : "Todo o período";
+
+    const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Relatório – ${cust.name}</title>
+  <style>
+    @page { size: A4 landscape; margin: 20mm; }
+    body { font-family: Arial, sans-serif; font-size: 11px; color: #111; }
+    h1 { font-size: 18px; margin-bottom: 4px; }
+    .sub { color: #666; margin-bottom: 16px; }
+    table { width: 100%; border-collapse: collapse; }
+    th { background: #f0f0f0; border: 1px solid #ccc; padding: 5px 8px; text-align: left; }
+    td { border: 1px solid #ddd; padding: 5px 8px; }
+    tfoot td { font-weight: bold; background: #fafafa; }
+    .badge-paga { color: #166534; }
+    .badge-vencida { color: #991b1b; }
+    .badge-aberta { color: #92400e; }
+  </style>
+</head>
+<body>
+  <h1>Contas a Receber – ${cust.name}</h1>
+  <p class="sub">Período: ${periodo} · Saldo total em aberto: ${brl(Number(bal?.open_balance ?? 0))}</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Vencimento</th>
+        <th>Status</th>
+        <th style="text-align:right">Valor Total</th>
+        <th style="text-align:right">Valor Pago</th>
+        <th style="text-align:right">Saldo</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+    <tfoot>
+      <tr>
+        <td colspan="2">Totais</td>
+        <td style="text-align:right">${brl(totalSales)}</td>
+        <td style="text-align:right">${brl(totalPaid)}</td>
+        <td style="text-align:right">${brl(totalPending)}</td>
+      </tr>
+    </tfoot>
+  </table>
+</body>
+</html>`;
+
+    const win = window.open("", "_blank");
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    win.print();
+  }
+
+  const tabConfig: { key: StatusTab; label: string; color: string }[] = [
+    { key: "abertas", label: "Abertas", color: "bg-amber-100 text-amber-800 border-amber-300" },
+    { key: "vencidas", label: "Vencidas", color: "bg-red-100 text-red-800 border-red-300" },
+    { key: "pagas", label: "Pagas", color: "bg-green-100 text-green-800 border-green-300" },
+    { key: "todas", label: "Todas", color: "bg-coco-100 text-coco-800 border-coco-300" },
+  ];
 
   return (
     <div className="space-y-6">
@@ -301,30 +418,13 @@ function ReceberInner() {
         <div className="card">
           <h2 className="font-bold text-coco-900 mb-3">Aging do fiado</h2>
           <p className="text-xs text-coco-600 mb-3">
-            Saldo aberto agrupado pela idade da venda mais antiga em
-            aberto de cada cliente.
+            Saldo aberto agrupado pela idade da venda mais antiga em aberto de cada cliente.
           </p>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <AgingBucket
-              label="0–30 dias"
-              value={aging.ate30}
-              tone="green"
-            />
-            <AgingBucket
-              label="31–60 dias"
-              value={aging.d31_60}
-              tone="amber"
-            />
-            <AgingBucket
-              label="61–90 dias"
-              value={aging.d61_90}
-              tone="red"
-            />
-            <AgingBucket
-              label="90+ dias"
-              value={aging.mais90}
-              tone="redDeep"
-            />
+            <AgingBucket label="0–30 dias" value={aging.ate30} tone="green" />
+            <AgingBucket label="31–60 dias" value={aging.d31_60} tone="amber" />
+            <AgingBucket label="61–90 dias" value={aging.d61_90} tone="red" />
+            <AgingBucket label="90+ dias" value={aging.mais90} tone="redDeep" />
           </div>
         </div>
       )}
@@ -334,9 +434,7 @@ function ReceberInner() {
           <h2 className="font-bold text-coco-900 mb-3">Clientes em aberto</h2>
           {balances.length === 0 ? (
             <div className="text-sm space-y-2">
-              <p className="text-coco-600">
-                Nenhum saldo em aberto. 🎉
-              </p>
+              <p className="text-coco-600">Nenhum saldo em aberto. 🎉</p>
               <a
                 href="/relatorios"
                 className="text-coco-700 underline hover:text-coco-900"
@@ -390,6 +488,7 @@ function ReceberInner() {
         </div>
 
         <div className="card lg:col-span-2">
+          {/* Customer selector + actions */}
           <div className="mb-3 flex flex-wrap items-end gap-2">
             <div className="flex-1 min-w-[200px]">
               <label className="label">Cliente</label>
@@ -406,68 +505,124 @@ function ReceberInner() {
                 ))}
               </select>
             </div>
-            {selected && (() => {
-              const cust = customers.find((c) => c.id === selected);
-              const bal = balances.find((b) => b.customer_id === selected);
-              const wa = cust
-                ? waLink(
-                    cust.phone,
-                    cobrancaMessage({
-                      customerName: cust.name,
-                      storeName: tenant?.name ?? "Coco da Amazônia",
-                      totalOpen: Number(bal?.open_balance ?? 0),
-                      openSales: openSales.map((s) => ({
-                        created_at: s.created_at,
-                        total: Number(s.total),
-                        paid: Number(s.paid_amount),
-                      })),
-                      oldestOpenAt: bal?.oldest_open_at ?? null,
-                    })
-                  )
-                : null;
-              return (
-                <div className="flex gap-2 flex-wrap">
-                  {openSales.length > 0 && (
-                    <button
-                      onClick={openBulk}
-                      className="btn-secondary"
-                      title="Distribui um pagamento entre as vendas mais antigas"
-                    >
-                      💰 Receber tudo
-                    </button>
-                  )}
-                  {wa && (
-                    <a
-                      href={wa}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="btn-secondary"
-                    >
-                      📲 WhatsApp
+            {selected &&
+              (() => {
+                const cust = customers.find((c) => c.id === selected);
+                const bal = balances.find((b) => b.customer_id === selected);
+                const wa = cust
+                  ? waLink(
+                      cust.phone,
+                      cobrancaMessage({
+                        customerName: cust.name,
+                        storeName: tenant?.name ?? "Coco da Amazônia",
+                        totalOpen: Number(bal?.open_balance ?? 0),
+                        openSales: openSales.map((s) => ({
+                          created_at: s.created_at,
+                          total: Number(s.total),
+                          paid: Number(s.paid_amount),
+                        })),
+                        oldestOpenAt: bal?.oldest_open_at ?? null,
+                      })
+                    )
+                  : null;
+                return (
+                  <div className="flex gap-2 flex-wrap">
+                    {openSales.length > 0 && (
+                      <button
+                        onClick={openBulk}
+                        className="btn-secondary"
+                        title="Distribui um pagamento entre as vendas mais antigas"
+                      >
+                        💰 Receber tudo
+                      </button>
+                    )}
+                    {sales.length > 0 && (
+                      <button
+                        onClick={handlePrint}
+                        className="btn-secondary"
+                        title="Gerar relatório imprimível"
+                      >
+                        🖨 Imprimir
+                      </button>
+                    )}
+                    {wa && (
+                      <a
+                        href={wa}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn-secondary"
+                      >
+                        📲 WhatsApp
+                      </a>
+                    )}
+                    <a href={`/clientes/${selected}`} className="btn-ghost">
+                      Histórico
                     </a>
-                  )}
-                  <a href={`/clientes/${selected}`} className="btn-ghost">
-                    Histórico
-                  </a>
-                </div>
-              );
-            })()}
+                  </div>
+                );
+              })()}
           </div>
+
+          {/* Date range filter */}
+          {selected && (
+            <div className="mb-3 flex flex-wrap items-end gap-3">
+              <div>
+                <label className="label">Data início</label>
+                <input
+                  type="date"
+                  className="input"
+                  value={dateFrom}
+                  max={dateTo}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="label">Data fim</label>
+                <input
+                  type="date"
+                  className="input"
+                  value={dateTo}
+                  min={dateFrom}
+                  max={todayIso()}
+                  onChange={(e) => setDateTo(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Status tabs */}
+          {selected && (
+            <div className="mb-3 flex gap-2 flex-wrap">
+              {tabConfig.map((t) => (
+                <button
+                  key={t.key}
+                  onClick={() => setStatusTab(t.key)}
+                  className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-all ${
+                    statusTab === t.key
+                      ? t.color + " shadow-sm"
+                      : "bg-white text-coco-600 border-coco-200 hover:bg-coco-50"
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          )}
 
           {!selected ? (
             <p className="text-coco-600 text-sm">
-              Escolha um cliente para ver as vendas em aberto e lançar
-              recebimentos.
+              Escolha um cliente para ver as vendas e lançar recebimentos.
             </p>
-          ) : openSales.length === 0 ? (
+          ) : sales.length === 0 ? (
             <p className="text-coco-600 text-sm">
-              Este cliente não possui vendas em aberto.
+              Nenhuma venda encontrada com os filtros selecionados.
             </p>
           ) : (
             <table className="table">
               <thead>
                 <tr>
                   <th>Data</th>
+                  <th>Status</th>
                   <th>Qtd</th>
                   <th>Total</th>
                   <th>Pago</th>
@@ -476,29 +631,74 @@ function ReceberInner() {
                 </tr>
               </thead>
               <tbody>
-                {openSales.map((s) => {
+                {sales.map((s) => {
                   const rest = Number(s.total) - Number(s.paid_amount);
+                  const daysOld = Math.floor(
+                    (Date.now() - new Date(s.created_at).getTime()) / 86400000
+                  );
+                  const isOverdue = s.status !== "paga" && daysOld > 30;
                   return (
                     <tr key={s.id}>
-                      <td>{fmtDate(s.created_at)}</td>
+                      <td>{fmtDateOnly(s.created_at)}</td>
+                      <td>
+                        <SaleStatusBadge
+                          status={s.status}
+                          isOverdue={isOverdue}
+                        />
+                      </td>
                       <td>{s.quantity}</td>
                       <td>{brl(Number(s.total))}</td>
                       <td>{brl(Number(s.paid_amount))}</td>
-                      <td className="font-semibold text-amber-700">
+                      <td
+                        className={
+                          rest > 0
+                            ? isOverdue
+                              ? "font-semibold text-red-700"
+                              : "font-semibold text-amber-700"
+                            : "text-green-700"
+                        }
+                      >
                         {brl(rest)}
                       </td>
                       <td className="text-right">
-                        <button
-                          onClick={() => startPay(s)}
-                          className="btn-primary text-sm py-1.5"
-                        >
-                          Receber
-                        </button>
+                        {s.status !== "paga" && (
+                          <button
+                            onClick={() => startPay(s)}
+                            className="btn-primary text-sm py-1.5"
+                          >
+                            Receber
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
                 })}
               </tbody>
+              {sales.length > 1 && (
+                <tfoot>
+                  <tr className="bg-coco-50 font-semibold text-sm">
+                    <td colSpan={3} className="py-2 px-3">
+                      Total
+                    </td>
+                    <td className="py-2 px-3">
+                      {brl(sales.reduce((s, x) => s + Number(x.total), 0))}
+                    </td>
+                    <td className="py-2 px-3">
+                      {brl(sales.reduce((s, x) => s + Number(x.paid_amount), 0))}
+                    </td>
+                    <td className="py-2 px-3">
+                      {brl(
+                        sales.reduce(
+                          (s, x) =>
+                            s + (Number(x.total) - Number(x.paid_amount)),
+                          0
+                        )
+                      )}
+                    </td>
+                    <td />
+                  </tr>
+                </tfoot>
+              )}
             </table>
           )}
         </div>
@@ -562,9 +762,7 @@ function ReceberInner() {
                 />
               </div>
             </div>
-            {error && (
-              <p className="text-red-700 text-sm mt-3">{error}</p>
-            )}
+            {error && <p className="text-red-700 text-sm mt-3">{error}</p>}
             <div className="flex justify-end gap-2 mt-5">
               <button
                 onClick={() => setPayingSale(null)}
@@ -580,119 +778,153 @@ function ReceberInner() {
         </div>
       )}
 
-      {bulkOpen && (() => {
-        // Preview da distribuição: pra mostrar quantas vendas seriam
-        // afetadas com o valor atual.
-        let remaining = +bulkAmount.toFixed(2);
-        let coveredCount = 0;
-        let lastPartial = 0;
-        for (const s of openSales) {
-          if (remaining <= 0) break;
-          const rest = +(Number(s.total) - Number(s.paid_amount)).toFixed(2);
-          if (rest <= 0) continue;
-          const apply = Math.min(rest, remaining);
-          coveredCount++;
-          if (apply < rest) lastPartial = apply;
-          remaining = +(remaining - apply).toFixed(2);
-        }
-        return (
-          <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
-              <h2 className="text-2xl font-bold text-coco-900 mb-2">
-                Receber em lote
-              </h2>
-              <p className="text-coco-700 text-sm mb-4">
-                Distribui o valor entre as vendas em aberto, da mais antiga
-                pra mais nova. Sobra fica creditada na próxima venda em
-                aberto.
-              </p>
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="label">Forma de pagamento</label>
-                    <select
-                      className="input"
-                      value={bulkMethod}
-                      onChange={(e) => setBulkMethod(e.target.value)}
-                    >
-                      {methods.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.name}
-                        </option>
-                      ))}
-                    </select>
+      {bulkOpen &&
+        (() => {
+          let remaining = +bulkAmount.toFixed(2);
+          let coveredCount = 0;
+          let lastPartial = 0;
+          for (const s of openSales) {
+            if (remaining <= 0) break;
+            const rest = +(Number(s.total) - Number(s.paid_amount)).toFixed(2);
+            if (rest <= 0) continue;
+            const apply = Math.min(rest, remaining);
+            coveredCount++;
+            if (apply < rest) lastPartial = apply;
+            remaining = +(remaining - apply).toFixed(2);
+          }
+          return (
+            <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
+                <h2 className="text-2xl font-bold text-coco-900 mb-2">
+                  Receber em lote
+                </h2>
+                <p className="text-coco-700 text-sm mb-4">
+                  Distribui o valor entre as vendas em aberto, da mais antiga
+                  pra mais nova. Sobra fica creditada na próxima venda em
+                  aberto.
+                </p>
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="label">Forma de pagamento</label>
+                      <select
+                        className="input"
+                        value={bulkMethod}
+                        onChange={(e) => setBulkMethod(e.target.value)}
+                      >
+                        {methods.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="label">Data</label>
+                      <input
+                        type="datetime-local"
+                        className="input"
+                        value={bulkDate}
+                        onChange={(e) => setBulkDate(e.target.value)}
+                      />
+                    </div>
                   </div>
                   <div>
-                    <label className="label">Data</label>
+                    <label className="label">Valor recebido</label>
                     <input
-                      type="datetime-local"
-                      className="input"
-                      value={bulkDate}
-                      onChange={(e) => setBulkDate(e.target.value)}
+                      type="number"
+                      step="0.01"
+                      className="input text-2xl font-bold"
+                      value={bulkAmount}
+                      onChange={(e) =>
+                        setBulkAmount(parseFloat(e.target.value || "0"))
+                      }
                     />
                   </div>
+                  <div>
+                    <label className="label">Observação (opcional)</label>
+                    <input
+                      className="input"
+                      value={bulkNotes}
+                      onChange={(e) => setBulkNotes(e.target.value)}
+                      placeholder="Ex.: pagamento total da semana…"
+                    />
+                  </div>
+                  <div className="bg-coco-50 border border-coco-100 rounded-xl p-3 text-sm">
+                    <strong>Vai cobrir {coveredCount} venda(s)</strong>
+                    {lastPartial > 0 && (
+                      <span>
+                        {" "}
+                        · última recebe parcial de {brl(lastPartial)}
+                      </span>
+                    )}
+                    {remaining > 0.01 && (
+                      <span className="text-amber-700">
+                        {" "}
+                        · sobra {brl(remaining)} não distribuída
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <div>
-                  <label className="label">Valor recebido</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    className="input text-2xl font-bold"
-                    value={bulkAmount}
-                    onChange={(e) =>
-                      setBulkAmount(parseFloat(e.target.value || "0"))
-                    }
-                  />
+                {bulkError && (
+                  <p className="text-red-700 text-sm mt-3">{bulkError}</p>
+                )}
+                <div className="flex justify-end gap-2 mt-5">
+                  <button
+                    onClick={() => setBulkOpen(false)}
+                    className="btn-ghost"
+                    disabled={bulkSaving}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={confirmBulk}
+                    disabled={bulkSaving || coveredCount === 0}
+                    className="btn-primary"
+                  >
+                    {bulkSaving ? "…" : "Confirmar"}
+                  </button>
                 </div>
-                <div>
-                  <label className="label">Observação (opcional)</label>
-                  <input
-                    className="input"
-                    value={bulkNotes}
-                    onChange={(e) => setBulkNotes(e.target.value)}
-                    placeholder="Ex.: pagamento total da semana…"
-                  />
-                </div>
-                <div className="bg-coco-50 border border-coco-100 rounded-xl p-3 text-sm">
-                  <strong>Vai cobrir {coveredCount} venda(s)</strong>
-                  {lastPartial > 0 && (
-                    <span>
-                      {" "}
-                      · última recebe parcial de {brl(lastPartial)}
-                    </span>
-                  )}
-                  {remaining > 0.01 && (
-                    <span className="text-amber-700">
-                      {" "}
-                      · sobra {brl(remaining)} não distribuída
-                    </span>
-                  )}
-                </div>
-              </div>
-              {bulkError && (
-                <p className="text-red-700 text-sm mt-3">{bulkError}</p>
-              )}
-              <div className="flex justify-end gap-2 mt-5">
-                <button
-                  onClick={() => setBulkOpen(false)}
-                  className="btn-ghost"
-                  disabled={bulkSaving}
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={confirmBulk}
-                  disabled={bulkSaving || coveredCount === 0}
-                  className="btn-primary"
-                >
-                  {bulkSaving ? "…" : "Confirmar"}
-                </button>
               </div>
             </div>
-          </div>
-        );
-      })()}
+          );
+        })()}
     </div>
+  );
+}
+
+function SaleStatusBadge({
+  status,
+  isOverdue,
+}: {
+  status: string;
+  isOverdue: boolean;
+}) {
+  if (status === "paga") {
+    return (
+      <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-800">
+        Paga
+      </span>
+    );
+  }
+  if (isOverdue) {
+    return (
+      <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-800">
+        Vencida
+      </span>
+    );
+  }
+  if (status === "parcial") {
+    return (
+      <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">
+        Parcial
+      </span>
+    );
+  }
+  return (
+    <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-yellow-100 text-yellow-800">
+      Aberta
+    </span>
   );
 }
 
@@ -715,9 +947,7 @@ function AgingBucket({
       : "bg-red-100 border-red-300 text-red-900";
   return (
     <div className={`rounded-xl border p-3 ${cls}`}>
-      <div className="text-xs uppercase tracking-wider opacity-80">
-        {label}
-      </div>
+      <div className="text-xs uppercase tracking-wider opacity-80">{label}</div>
       <div className="text-xl font-bold mt-1">{brl(value)}</div>
     </div>
   );
