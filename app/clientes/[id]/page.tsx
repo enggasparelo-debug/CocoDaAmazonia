@@ -11,6 +11,21 @@ import type {
   Sale,
   SalePayment,
 } from "@/lib/types";
+
+type CustomerProfitability = {
+  customer_id: string;
+  tenant_id: string;
+  total_sales: number;
+  ltv: number;
+  total_qty: number;
+  total_paid: number;
+  first_sale_at: string | null;
+  last_sale_at: string | null;
+  avg_ticket: number;
+  purchases_per_month: number;
+  avg_unit_cost: number;
+  net_margin_pct: number | null;
+};
 import StatusBadge from "@/components/StatusBadge";
 import ConfirmModal from "@/components/ConfirmModal";
 import SaleEditor from "@/components/SaleEditor";
@@ -31,6 +46,7 @@ export default function ClienteDetalhePage() {
   const [methods, setMethods] = useState<Record<string, PaymentMethod>>({});
   const [methodList, setMethodList] = useState<PaymentMethod[]>([]);
   const [allCustomers, setAllCustomers] = useState<Customer[]>([]);
+  const [profitability, setProfitability] = useState<CustomerProfitability | null>(null);
   const [loading, setLoading] = useState(true);
   const [confirmDelete, setConfirmDelete] = useState<SalePayment | null>(null);
   const [editingSale, setEditingSale] = useState<Sale | null>(null);
@@ -39,7 +55,7 @@ export default function ClienteDetalhePage() {
 
   async function load() {
     setLoading(true);
-    const [c, s, m, ac] = await Promise.all([
+    const [c, s, m, ac, prof] = await Promise.all([
       supabase.from("customers").select("*").eq("id", id).single(),
       supabase
         .from("sales")
@@ -48,10 +64,16 @@ export default function ClienteDetalhePage() {
         .order("created_at", { ascending: false }),
       supabase.from("payment_methods").select("*"),
       supabase.from("customers").select("*").order("name"),
+      supabase
+        .from("customer_profitability")
+        .select("*")
+        .eq("customer_id", id)
+        .maybeSingle(),
     ]);
     setCustomer((c.data as Customer) ?? null);
     setSales((s.data as Sale[]) ?? []);
     setAllCustomers((ac.data as Customer[]) ?? []);
+    setProfitability((prof.data as CustomerProfitability) ?? null);
 
     const map: Record<string, PaymentMethod> = {};
     const list = (m.data as PaymentMethod[] | null) ?? [];
@@ -184,6 +206,62 @@ export default function ClienteDetalhePage() {
           <div className="text-2xl font-bold">{sales.length}</div>
         </div>
       </div>
+
+      {profitability && (
+        <div className="card">
+          <h2 className="font-bold text-coco-900 mb-3">Rentabilidade</h2>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div>
+              <div className="text-xs uppercase text-coco-700 mb-1">LTV (receita total)</div>
+              <div className="text-xl font-bold text-coco-900">{brl(Number(profitability.ltv))}</div>
+              <div className="text-xs text-coco-600 mt-0.5">
+                {profitability.total_qty} cocos vendidos
+              </div>
+            </div>
+            <div>
+              <div className="text-xs uppercase text-coco-700 mb-1">Ticket médio</div>
+              <div className="text-xl font-bold">{brl(Number(profitability.avg_ticket))}</div>
+              <div className="text-xs text-coco-600 mt-0.5">
+                por venda ({profitability.total_sales} no total)
+              </div>
+            </div>
+            <div>
+              <div className="text-xs uppercase text-coco-700 mb-1">Frequência</div>
+              <div className="text-xl font-bold">
+                {Number(profitability.purchases_per_month).toFixed(1)}×/mês
+              </div>
+              {profitability.first_sale_at && (
+                <div className="text-xs text-coco-600 mt-0.5">
+                  desde {fmtDate(profitability.first_sale_at)}
+                </div>
+              )}
+            </div>
+            <div>
+              <div className="text-xs uppercase text-coco-700 mb-1">Margem líquida est.</div>
+              {profitability.net_margin_pct !== null ? (
+                <>
+                  <div
+                    className={`text-xl font-bold ${
+                      Number(profitability.net_margin_pct) >= 0.2
+                        ? "text-green-700"
+                        : Number(profitability.net_margin_pct) >= 0
+                        ? "text-amber-700"
+                        : "text-red-700"
+                    }`}
+                  >
+                    {(Number(profitability.net_margin_pct) * 100).toFixed(1)}%
+                  </div>
+                  <div className="text-xs text-coco-600 mt-0.5">
+                    custo médio {brl(Number(profitability.avg_unit_cost))}/un
+                  </div>
+                </>
+              ) : (
+                <div className="text-xl font-bold text-coco-400">—</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="card">
         <h2 className="font-bold text-coco-900 mb-3">

@@ -4,6 +4,7 @@ import {
   findMethodId,
   isEmptyRow,
   parseRow,
+  suggestCustomerMatches,
   summarize,
   type ImportRawRow,
 } from "@/lib/salesImport";
@@ -157,12 +158,23 @@ describe("parseRow", () => {
   });
 
   it("aceita serial number do Excel como data", () => {
-    // 2026-04-27 = serial 46139 (1899-12-30 epoch)
-    const ref = new Date(2026, 3, 27).getTime();
+    // Serial Excel = dias desde 1899-12-30 UTC. Pra não depender do fuso
+    // do runner, montamos com Date.UTC (mesma convenção do .xlsx).
+    const ref = Date.UTC(2026, 3, 27);
     const serial = ref / 86_400_000 + 25569;
     const r = parseRow(baseRow({ date: serial }));
     expect(r.errors).toEqual([]);
     expect(r.date.getDate()).toBe(27);
+  });
+
+  it("Date em UTC midnight (estilo ExcelJS) não escorrega 1 dia em fuso negativo", () => {
+    // ExcelJS entrega "06/05/2026" como 2026-05-06T00:00:00Z. Em UTC-3
+    // os getters locais voltariam dia 5 — o fix força componentes UTC.
+    const r = parseRow(baseRow({ date: new Date(Date.UTC(2026, 4, 6)) }));
+    expect(r.errors).toEqual([]);
+    expect(r.date.getDate()).toBe(6);
+    expect(r.date.getMonth()).toBe(4);
+    expect(r.date.getFullYear()).toBe(2026);
   });
 
   it("erro com pagamento negativo", () => {
@@ -227,5 +239,42 @@ describe("summarize", () => {
     expect(s.byMethod.DINHEIRO).toBe(210);
     expect(s.byMethod.CARTAO).toBe(0);
     expect(s.fiado).toBe(450);
+  });
+});
+
+describe("suggestCustomerMatches", () => {
+  const customers = [
+    { id: "1", name: "MINEIRO" },
+    { id: "2", name: "CABEÇA BRANCA" },
+    { id: "3", name: "PIAUÍ" },
+    { id: "4", name: "STEPHANO" },
+    { id: "5", name: "STEFANO" },
+  ];
+
+  it("retorna o match exato com score 0", () => {
+    const r = suggestCustomerMatches("mineiro", customers);
+    expect(r[0].id).toBe("1");
+    expect(r[0].score).toBe(0);
+  });
+
+  it("ignora acentos", () => {
+    const r = suggestCustomerMatches("PIAUI", customers);
+    expect(r[0].id).toBe("3");
+  });
+
+  it("acha o mais parecido por Levenshtein", () => {
+    const r = suggestCustomerMatches("STEFANO", customers);
+    expect(r[0].id).toBe("5");
+    expect(r[1]?.id).toBe("4");
+  });
+
+  it("retorna vazio quando nada se aproxima", () => {
+    const r = suggestCustomerMatches("ZZZZZZZ", customers);
+    expect(r).toEqual([]);
+  });
+
+  it("respeita limite", () => {
+    const r = suggestCustomerMatches("ST", customers, 1);
+    expect(r.length).toBeLessThanOrEqual(1);
   });
 });

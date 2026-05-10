@@ -5,6 +5,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useEffect, useState } from "react";
 import { useTenant } from "@/lib/useTenant";
+import { useDespesasAlert } from "@/lib/useDespesasAlert";
+import { usePayablesAlert } from "@/lib/usePayablesAlert";
 
 type Role = "admin" | "operador";
 type NavItem = {
@@ -22,13 +24,16 @@ const items: NavItem[] = [
   { href: "/clientes", label: "Clientes", icon: "👥", roles: ["admin", "operador"] },
   { href: "/formas-pagamento", label: "Formas de Pagamento", icon: "💳", roles: ["admin"] },
   { href: "/receber", label: "Contas a Receber", icon: "📒", roles: ["admin"] },
+  { href: "/pagar", label: "Contas a Pagar", icon: "🧾", roles: ["admin"] },
   { href: "/caixa", label: "Caixa", icon: "💵", roles: ["admin"] },
   { href: "/despesas", label: "Despesas", icon: "💸", roles: ["admin"] },
   { href: "/conciliacao", label: "Conciliação Bancária", icon: "🏦", roles: ["admin"] },
   { href: "/estoque", label: "Estoque", icon: "📦", roles: ["admin"] },
+  { href: "/fluxo-caixa", label: "Fluxo de Caixa", icon: "📉", roles: ["admin"] },
   { href: "/financeiro", label: "Financeiro", icon: "💰", roles: ["admin"] },
   { href: "/operadores", label: "Operadores", icon: "🧑‍💼", roles: ["admin"] },
   { href: "/relatorios", label: "Relatórios", icon: "📈", roles: ["admin"] },
+  { href: "/exportar", label: "Exportar Contador", icon: "📤", roles: ["admin"] },
   { href: "/configuracoes", label: "Configurações", icon: "⚙️", roles: ["admin"] },
   { href: "/auditoria", label: "Auditoria", icon: "🔍", roles: ["admin"] },
 ];
@@ -54,6 +59,8 @@ export default function Sidebar() {
 
   const role: Role = (membership?.role ?? "operador") as Role;
   const visible = items.filter((i) => i.roles.includes(role));
+  const despesasAlert = useDespesasAlert();
+  const payablesAlert = usePayablesAlert();
 
   return (
     <aside className="w-60 bg-coco-800 text-coco-50 hidden md:flex flex-col py-6 px-4 sticky top-0 h-screen">
@@ -78,7 +85,17 @@ export default function Sidebar() {
               }`}
             >
               <span className="text-lg">{it.icon}</span>
-              <span className="font-medium text-sm">{it.label}</span>
+              <span className="font-medium text-sm flex-1">{it.label}</span>
+              {it.href === "/despesas" && despesasAlert > 0 && (
+                <span className="bg-red-500 text-white text-xs font-bold rounded-full px-1.5 py-0.5 min-w-[20px] text-center">
+                  {despesasAlert}
+                </span>
+              )}
+              {it.href === "/pagar" && payablesAlert > 0 && (
+                <span className="bg-red-500 text-white text-xs font-bold rounded-full px-1.5 py-0.5 min-w-[20px] text-center">
+                  {payablesAlert}
+                </span>
+              )}
             </Link>
           );
         })}

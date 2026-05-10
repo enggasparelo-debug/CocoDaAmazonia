@@ -51,6 +51,9 @@ por ambiente.
 | 19 | `migration_v18_attachments_and_notifications.sql` | `attachment_url` + `notification_log`. |
 | 20 | `migration_v19_inventory_matview.sql` | inventory_balance vira matview. |
 | 21 | `migration_v20_audit_retention_and_indexes.sql` | `prune_audit_log()` + índices compostos. |
+| 22 | `migration_v21_contas_a_pagar.sql` | Tabela `payables` (contas a pagar) + view `cash_flow_projection`. |
+| 23 | `migration_v22_despesas_ap.sql` | Evolução de despesas com alertas de vencimento. |
+| 24 | `migration_v23_customer_profitability.sql` | View `customer_profitability` com LTV, ticket médio, frequência e margem por cliente. |
 
 ## Pós-migração (Edge Functions)
 

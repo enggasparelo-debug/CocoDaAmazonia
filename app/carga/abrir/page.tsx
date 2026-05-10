@@ -67,10 +67,6 @@ export default function AbrirCargaPage() {
     setErr(null);
     const opCocos = parseInt(opening || "0", 10);
     if (!(opCocos > 0)) return setErr("Informe a quantidade de cocos.");
-    if (opCocos > stock)
-      return setErr(
-        `Quantidade (${opCocos}) maior que o estoque disponível (${stock}).`
-      );
     const opId = isAdmin ? operatorId || userId : userId;
     if (!opId) return setErr("Operador não identificado.");
     setSaving(true);
@@ -96,6 +92,10 @@ export default function AbrirCargaPage() {
     router.push(isAdmin && opId !== userId ? `/cargas/${data.id}` : "/carga");
     router.refresh();
   }
+
+  const opCocos = parseInt(opening || "0", 10);
+  const projected = stock - (isNaN(opCocos) ? 0 : opCocos);
+  const goesNegative = opCocos > 0 && projected < 0;
 
   if (tLoading || loading) {
     return <div className="p-6 text-coco-700">Carregando…</div>;
@@ -177,7 +177,23 @@ export default function AbrirCargaPage() {
           />
           <p className="text-xs text-coco-600 mt-1">
             Estoque disponível: {stock}.
+            {opCocos > 0 && (
+              <>
+                {" · "}Após abrir:{" "}
+                <strong className={goesNegative ? "text-red-700" : ""}>
+                  {projected}
+                </strong>{" "}
+                coco(s).
+              </>
+            )}
           </p>
+          {goesNegative && (
+            <div className="mt-2 text-sm rounded-xl p-3 bg-amber-50 border border-amber-300 text-amber-900">
+              ⚠ Estoque ficará <strong>negativo ({projected})</strong> depois
+              de abrir esta carga. Confirme que tem cocos físicos suficientes
+              ou ajuste a quantidade. Você pode prosseguir mesmo assim.
+            </div>
+          )}
         </div>
         <div>
           <label className="label">Observações</label>
@@ -196,9 +212,15 @@ export default function AbrirCargaPage() {
         <button
           onClick={save}
           disabled={saving}
-          className="btn-primary w-full text-lg py-4"
+          className={`w-full text-lg py-4 ${
+            goesNegative ? "btn-secondary border-amber-400" : "btn-primary"
+          }`}
         >
-          {saving ? "Abrindo…" : "Abrir carga"}
+          {saving
+            ? "Abrindo…"
+            : goesNegative
+            ? "Abrir mesmo com estoque negativo"
+            : "Abrir carga"}
         </button>
       </div>
     </div>

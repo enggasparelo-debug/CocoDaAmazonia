@@ -10,6 +10,8 @@ export type BarPoint = {
   highlight?: boolean;
 };
 
+export type BarUnit = "brl" | "int";
+
 // Arredonda pro próximo "número bonito" pra deixar o eixo Y limpo
 // (1, 2, 5 × 10^k). 0 vira 1.
 function niceMax(v: number): number {
@@ -21,11 +23,22 @@ function niceMax(v: number): number {
   return nf * base;
 }
 
-// Formata "abreviado" pra rótulos curtos do eixo Y (1.2k, 35k).
-function shortBrl(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+// Formato curto pro eixo Y / rótulos das barras. BRL mantém vírgula
+// decimal pra valores < 1000 (ex.: "2,50"); int mostra inteiros.
+function shortFmt(n: number, unit: BarUnit): string {
+  if (unit === "int") {
+    if (n >= 1_000_000)
+      return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, "")}k`;
+    return Math.round(n).toString();
+  }
+  if (n >= 1_000_000)
+    return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, "")}k`;
   return brl(n).replace("R$", "").trim();
+}
+function fullFmt(n: number, unit: BarUnit): string {
+  return unit === "int" ? Math.round(n).toLocaleString("pt-BR") : brl(n);
 }
 
 export default function BarChart({
@@ -35,6 +48,7 @@ export default function BarChart({
   highlightColor = "#1f5d37",
   showAverage = true,
   showValues = "auto", // "auto" mostra quando cabem ≤14 barras
+  unit = "brl",
 }: {
   points: BarPoint[];
   height?: number;
@@ -42,6 +56,7 @@ export default function BarChart({
   highlightColor?: string;
   showAverage?: boolean;
   showValues?: "auto" | "always" | "never";
+  unit?: BarUnit;
 }) {
   if (!points.length) return null;
   const rawMax = Math.max(...points.map((p) => p.value), 0);
@@ -65,6 +80,13 @@ export default function BarChart({
   const showVals =
     showValues === "always" ||
     (showValues === "auto" && points.length <= 14 && rawMax > 0);
+
+  // Pra muitos pontos, pular rótulos do eixo X pra não sobrepor.
+  // Alvo: ~14 rótulos visíveis. Sub-rótulo (dia da semana) só ≤24 barras.
+  const labelStep = Math.max(1, Math.ceil(points.length / 14));
+  const showLabel = (i: number) =>
+    i % labelStep === 0 || i === points.length - 1;
+  const showSub = points.length <= 24;
 
   return (
     <svg
@@ -98,10 +120,10 @@ export default function BarChart({
         strokeWidth="1"
       />
       <text x="6" y={padTop + 4} fontSize="10" fill="#5a7a64">
-        {shortBrl(max)}
+        {shortFmt(max, unit)}
       </text>
       <text x="6" y={padTop + innerH / 2 + 3} fontSize="10" fill="#5a7a64">
-        {shortBrl(half)}
+        {shortFmt(half, unit)}
       </text>
       <text x="6" y={padTop + innerH + 3} fontSize="10" fill="#5a7a64">
         0
@@ -125,7 +147,7 @@ export default function BarChart({
             >
               <title>
                 {p.label ?? p.date}
-                {p.subLabel ? ` (${p.subLabel})` : ""} · {brl(p.value)}
+                {p.subLabel ? ` (${p.subLabel})` : ""} · {fullFmt(p.value, unit)}
               </title>
             </rect>
             {showVals && p.value > 0 && (
@@ -137,13 +159,13 @@ export default function BarChart({
                 fill={p.highlight ? "#1a3a25" : "#3d5d4a"}
                 fontWeight={p.highlight ? "bold" : "normal"}
               >
-                {shortBrl(p.value)}
+                {shortFmt(p.value, unit)}
               </text>
             )}
-            {p.label && (
+            {p.label && showLabel(i) && (
               <text
                 x={x + barW / 2}
-                y={h - (p.subLabel ? 18 : 10)}
+                y={h - (showSub && p.subLabel ? 18 : 10)}
                 textAnchor="middle"
                 fontSize="9"
                 fill={p.highlight ? "#1a3a25" : "#5a7a64"}
@@ -152,7 +174,7 @@ export default function BarChart({
                 {p.label}
               </text>
             )}
-            {p.subLabel && (
+            {p.subLabel && showSub && showLabel(i) && (
               <text
                 x={x + barW / 2}
                 y={h - 6}
@@ -186,7 +208,7 @@ export default function BarChart({
             fontSize="10"
             fill="#b45309"
           >
-            média {shortBrl(avg)}
+            média {shortFmt(avg, unit)}
           </text>
         </g>
       )}
