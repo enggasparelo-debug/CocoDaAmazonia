@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { brl } from "@/lib/format";
 import { useToast } from "@/components/Toast";
-import type { Payable } from "@/lib/types";
+import type { Payable, Supplier } from "@/lib/types";
 
 const CATEGORIES = [
   "Fornecedor de Coco",
@@ -51,23 +51,28 @@ function statusLabel(p: Payable) {
   return { text: `Em ${d} dias`, cls: "bg-blue-100 text-blue-700" };
 }
 
-const emptyPayable: Partial<Payable> = {
-  supplier_name: "",
-  description: "",
-  amount: 0,
-  due_date: addDays(todayStr(), 30),
-  category: "",
-  notes: "",
-};
+function emptyPayable(): Partial<Payable> {
+  return {
+    supplier_name: "",
+    supplier_id: null,
+    description: "",
+    amount: 0,
+    expense_date: todayStr(),
+    due_date: addDays(todayStr(), 30),
+    document_number: "",
+    category: "",
+    notes: "",
+  };
+}
 
 export default function PagarPage() {
   const supabase = createClient();
   const toast = useToast();
 
   const [payables, setPayables] = useState<Payable[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Partial<Payable> | null>(null);
-  const [showPaid, setShowPaid] = useState(false);
   const [filterStatus, setFilterStatus] = useState<string>("pendente");
 
   // projeção de caixa
@@ -76,7 +81,7 @@ export default function PagarPage() {
 
   async function load() {
     setLoading(true);
-    const [pRes, rRes] = await Promise.all([
+    const [pRes, rRes, sRes] = await Promise.all([
       supabase
         .from("payables")
         .select("*")
@@ -86,6 +91,11 @@ export default function PagarPage() {
         .select("total, paid_amount")
         .neq("status", "paga")
         .is("canceled_at", null),
+      supabase
+        .from("suppliers")
+        .select("*")
+        .eq("active", true)
+        .order("name"),
     ]);
     setPayables((pRes.data as Payable[]) ?? []);
     setReceivables(
@@ -93,6 +103,7 @@ export default function PagarPage() {
         (s) => ({ amount: s.total - s.paid_amount })
       )
     );
+    setSuppliers((sRes.data as Supplier[]) ?? []);
     setLoading(false);
   }
 
@@ -143,16 +154,20 @@ export default function PagarPage() {
   }, [payables, receivables, horizon]);
 
   async function save() {
-    if (!editing?.supplier_name?.trim()) return toast.error("Fornecedor obrigatório.");
+    if (!editing?.supplier_name?.trim() && !editing?.supplier_id)
+      return toast.error("Fornecedor obrigatório.");
     if (!editing?.description?.trim()) return toast.error("Descrição obrigatória.");
     if (!editing.amount || Number(editing.amount) <= 0) return toast.error("Valor inválido.");
     if (!editing.due_date) return toast.error("Data de vencimento obrigatória.");
 
     const payload = {
       supplier_name: editing.supplier_name!.trim(),
+      supplier_id: editing.supplier_id || null,
       description: editing.description!.trim(),
       amount: Number(editing.amount),
+      expense_date: editing.expense_date || null,
       due_date: editing.due_date,
+      document_number: editing.document_number?.trim() || null,
       category: editing.category || null,
       notes: editing.notes || null,
       status: editing.status || "pendente",
@@ -194,7 +209,7 @@ export default function PagarPage() {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-2xl font-bold text-coco-800">Contas a Pagar</h1>
         <button
-          onClick={() => setEditing({ ...emptyPayable })}
+          onClick={() => setEditing(emptyPayable())}
           className="btn-primary"
         >
           + Nova Conta
@@ -307,9 +322,19 @@ export default function PagarPage() {
                     </span>
                   </div>
                   <div className="text-sm text-gray-600 truncate mt-0.5">{p.description}</div>
-                  {p.notes && (
-                    <div className="text-xs text-gray-400 truncate">{p.notes}</div>
-                  )}
+                  <div className="flex gap-3 mt-0.5 flex-wrap">
+                    {p.expense_date && (
+                      <span className="text-xs text-gray-400">
+                        Compra: {new Date(p.expense_date + "T12:00:00").toLocaleDateString("pt-BR")}
+                      </span>
+                    )}
+                    {p.document_number && (
+                      <span className="text-xs text-gray-400">Doc: {p.document_number}</span>
+                    )}
+                    {p.notes && (
+                      <span className="text-xs text-gray-400 truncate">{p.notes}</span>
+                    )}
+                  </div>
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
                   <div className="text-right">
@@ -351,19 +376,45 @@ export default function PagarPage() {
       {/* Modal de edição */}
       {editing && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <h2 className="text-lg font-bold text-coco-800">
               {editing.id ? "Editar Conta" : "Nova Conta a Pagar"}
             </h2>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Fornecedor *</label>
-              <input
-                className="input-field"
-                value={editing.supplier_name ?? ""}
-                onChange={(e) => setEditing({ ...editing, supplier_name: e.target.value })}
-                placeholder="Ex: Fazenda Boa Vista"
-              />
+              {suppliers.length > 0 ? (
+                <select
+                  className="input-field"
+                  value={editing.supplier_id ?? ""}
+                  onChange={(e) => {
+                    const s = suppliers.find((x) => x.id === e.target.value);
+                    setEditing({
+                      ...editing,
+                      supplier_id: e.target.value || null,
+                      supplier_name: s?.name ?? editing.supplier_name ?? "",
+                    });
+                  }}
+                >
+                  <option value="">Selecionar fornecedor…</option>
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  className="input-field"
+                  value={editing.supplier_name ?? ""}
+                  onChange={(e) => setEditing({ ...editing, supplier_name: e.target.value })}
+                  placeholder="Ex: Fazenda Boa Vista"
+                />
+              )}
+              {suppliers.length === 0 && (
+                <p className="text-xs text-gray-400 mt-1">
+                  Nenhum fornecedor cadastrado.{" "}
+                  <a href="/fornecedores" className="text-coco-600 underline">Cadastrar fornecedor</a>
+                </p>
+              )}
             </div>
 
             <div>
@@ -395,6 +446,27 @@ export default function PagarPage() {
                   type="date"
                   value={editing.due_date ?? ""}
                   onChange={(e) => setEditing({ ...editing, due_date: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Data da Despesa</label>
+                <input
+                  className="input-field"
+                  type="date"
+                  value={editing.expense_date ?? ""}
+                  onChange={(e) => setEditing({ ...editing, expense_date: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nº Documento</label>
+                <input
+                  className="input-field"
+                  value={editing.document_number ?? ""}
+                  onChange={(e) => setEditing({ ...editing, document_number: e.target.value })}
+                  placeholder="NF-e, boleto…"
                 />
               </div>
             </div>
