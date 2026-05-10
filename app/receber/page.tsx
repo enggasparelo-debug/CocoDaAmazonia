@@ -24,16 +24,17 @@ function firstOfMonthIso() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
 }
 
-function monthsAgoIso(n: number) {
+function daysAgoIso(n: number) {
   const d = new Date();
-  d.setMonth(d.getMonth() - n);
+  d.setDate(d.getDate() - n);
   return d.toISOString().slice(0, 10);
 }
 
 const QUICK_FILTERS = [
-  { label: "Mês atual", from: () => firstOfMonthIso(), to: () => todayIso() },
-  { label: "3 meses", from: () => monthsAgoIso(3), to: () => todayIso() },
-  { label: "6 meses", from: () => monthsAgoIso(6), to: () => todayIso() },
+  { label: "7 dias", from: () => daysAgoIso(7), to: () => todayIso() },
+  { label: "15 dias", from: () => daysAgoIso(15), to: () => todayIso() },
+  { label: "21 dias", from: () => daysAgoIso(21), to: () => todayIso() },
+  { label: "30 dias", from: () => daysAgoIso(30), to: () => todayIso() },
   { label: "Tudo", from: () => "2000-01-01", to: () => todayIso() },
 ];
 
@@ -68,9 +69,9 @@ function ReceberInner() {
   const [payNotes, setPayNotes] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
 
-  const [dateFrom, setDateFrom] = useState<string>(firstOfMonthIso());
+  const [dateFrom, setDateFrom] = useState<string>(daysAgoIso(30));
   const [dateTo, setDateTo] = useState<string>(todayIso());
-  const [activeQuick, setActiveQuick] = useState<string>("Mês atual");
+  const [activeQuick, setActiveQuick] = useState<string>("30 dias");
   const [statusTab, setStatusTab] = useState<StatusTab>("abertas");
 
   const [bulkOpen, setBulkOpen] = useState(false);
