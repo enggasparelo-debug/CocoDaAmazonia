@@ -49,9 +49,17 @@ type SaleLite = Pick<
   | "quantity"
   | "customer_id"
   | "seller_id"
+  | "carga_id"
   | "status"
   | "created_at"
 >;
+
+type InvMovement = {
+  kind: string;
+  quantity: number;
+  unit_cost: number | null;
+  created_at: string;
+};
 
 type PaymentLite = {
   id: string;
@@ -91,6 +99,8 @@ type State = {
   cashOpenedAt: string | null;
   openCargas: number;
   oldestCargaOpenedAt: string | null;
+  // CMV: entradas de estoque pra custo médio ponderado
+  invMovements: InvMovement[];
 };
 
 const EMPTY: State = {
@@ -110,6 +120,7 @@ const EMPTY: State = {
   cashOpenedAt: null,
   openCargas: 0,
   oldestCargaOpenedAt: null,
+  invMovements: [],
 };
 
 const WEEKDAY_LABELS = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
@@ -173,7 +184,7 @@ export default function DashboardClient() {
       const curSalesBuilder = supabase
         .from("sales")
         .select(
-          "id,code,total,paid_amount,quantity,customer_id,seller_id,status,created_at,sale_payments(id,amount,paid_at,payment_method_id)"
+          "id,code,total,paid_amount,quantity,customer_id,seller_id,carga_id,status,created_at,sale_payments(id,amount,paid_at,payment_method_id)"
         )
         .gte("created_at", cur.startIso)
         .lt("created_at", cur.endIso)
@@ -205,6 +216,7 @@ export default function DashboardClient() {
         custsQ,
         sellersQ,
         methodsQ,
+        invMovQ,
       ] = await Promise.all([
         curSalesQuery,
         supabase
@@ -248,6 +260,11 @@ export default function DashboardClient() {
         supabase.from("customers").select("id,name").order("name"),
         supabase.from("sellers").select("id,name,active").order("name"),
         supabase.from("payment_methods").select("id,name").order("name"),
+        supabase
+          .from("inventory_movements")
+          .select("kind,quantity,unit_cost,created_at")
+          .eq("kind", "entrada")
+          .order("created_at", { ascending: true }),
       ]);
 
       type SaleWithPayments = {
@@ -258,6 +275,7 @@ export default function DashboardClient() {
         quantity: number | string;
         customer_id: string | null;
         seller_id: string | null;
+        carga_id: string | null;
         status: SaleLite["status"];
         created_at: string;
         sale_payments?:
@@ -314,6 +332,7 @@ export default function DashboardClient() {
         quantity: Number(s.quantity),
         customer_id: s.customer_id ?? null,
         seller_id: s.seller_id ?? null,
+        carga_id: s.carga_id ?? null,
         status: s.status,
         created_at: s.created_at,
       }));
@@ -375,6 +394,7 @@ export default function DashboardClient() {
         cashOpenedAt: cashData?.opened_at ?? null,
         openCargas: cargasData.length,
         oldestCargaOpenedAt,
+        invMovements: (invMovQ.data as InvMovement[]) ?? [],
       });
       setCustomers((custsQ.data as Customer[]) ?? []);
       setSellers((sellersQ.data as Seller[]) ?? []);
@@ -489,6 +509,45 @@ export default function DashboardClient() {
   }, [totalCocos, range]);
   const recebidoPctFat =
     faturado > 0 ? Math.round((recebido / faturado) * 100) : null;
+
+  // CMV via custo médio ponderado das entradas de estoque (mesma lógica do DRE).
+  const cmv = useMemo(() => {
+    if (state.invMovements.length === 0)
+      return { custo: 0, custoUnitMedio: 0, semCusto: true, fonteHistorica: false };
+    const startMs = new Date(rangeBoundsIso(range).startIso).getTime();
+    const entriesInPeriod = state.invMovements.filter(
+      (m) =>
+        new Date(m.created_at).getTime() >= startMs &&
+        m.unit_cost !== null &&
+        Number(m.unit_cost) > 0
+    );
+    let qty = 0;
+    let cost = 0;
+    const source = entriesInPeriod.length > 0 ? entriesInPeriod : state.invMovements;
+    for (const m of source) {
+      if (m.unit_cost && Number(m.unit_cost) > 0) {
+        qty += Number(m.quantity);
+        cost += Number(m.quantity) * Number(m.unit_cost);
+      }
+    }
+    const unitMedio = qty > 0 ? cost / qty : 0;
+    return {
+      custo: +(totalCocos * unitMedio).toFixed(2),
+      custoUnitMedio: unitMedio,
+      semCusto: unitMedio === 0,
+      fonteHistorica: entriesInPeriod.length === 0,
+    };
+  }, [state.invMovements, totalCocos, range]);
+
+  const margemBruta = faturado - cmv.custo;
+  const margemBrutaPct = faturado > 0 ? Math.round((margemBruta / faturado) * 100) : null;
+
+  // Receita por canal: vendas via carga (rotas) vs varejo direto.
+  const receitaCargas = state.curSales.reduce(
+    (s, r) => s + (r.carga_id ? r.total : 0),
+    0
+  );
+  const receitaVarejo = faturado - receitaCargas;
 
   const dFat = pctChange(faturado, state.prevSalesTotal);
   const dRec = pctChange(recebido, state.prevPaymentsTotal);
@@ -941,6 +1000,71 @@ export default function DashboardClient() {
               : undefined
           }
         />
+      </div>
+
+      {/* Margem Bruta e KPIs por Canal de Venda */}
+      <div className="card space-y-3">
+        <h2 className="text-base font-bold text-coco-900">
+          Margem &amp; Canal de Venda · <span className="font-normal text-coco-600">{rangeLabel}</span>
+        </h2>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <DashboardKpi
+            label="Margem bruta"
+            icon="📊"
+            accent={margemBruta >= 0 ? "green" : "red"}
+            value={cmv.semCusto ? "—" : brl(margemBruta)}
+            sub={
+              cmv.semCusto
+                ? "sem custo cadastrado"
+                : margemBrutaPct !== null
+                ? `${margemBrutaPct}% do faturado`
+                : undefined
+            }
+          />
+          <DashboardKpi
+            label="CMV estimado"
+            icon="🏭"
+            accent="neutral"
+            value={cmv.semCusto ? "—" : brl(cmv.custo)}
+            sub={
+              cmv.semCusto
+                ? "sem custo cadastrado"
+                : cmv.fonteHistorica
+                ? "custo histórico"
+                : "custo do período"
+            }
+          />
+          <DashboardKpi
+            label="Custo médio/coco"
+            icon="🥥"
+            accent="neutral"
+            value={cmv.custoUnitMedio > 0 ? brl(cmv.custoUnitMedio) : "—"}
+            sub={cmv.custoUnitMedio > 0 ? "R$/unidade" : "sem custo cadastrado"}
+          />
+          <DashboardKpi
+            label="Varejo direto"
+            icon="🛒"
+            accent="primary"
+            value={brl(receitaVarejo)}
+            sub={
+              faturado > 0
+                ? `${Math.round((receitaVarejo / faturado) * 100)}% do faturado`
+                : "sem vendas"
+            }
+          />
+          <DashboardKpi
+            label="Cargas / Rotas"
+            icon="🚚"
+            accent="amber"
+            value={brl(receitaCargas)}
+            href="/cargas"
+            sub={
+              faturado > 0
+                ? `${Math.round((receitaCargas / faturado) * 100)}% do faturado`
+                : "sem vendas"
+            }
+          />
+        </div>
       </div>
 
       <div className="card">
