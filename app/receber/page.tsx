@@ -545,10 +545,10 @@ function ReceberInner() {
                     {openSales.length > 0 && (
                       <button
                         onClick={openBulk}
-                        className="btn-secondary"
-                        title="Distribui um pagamento entre as vendas mais antigas"
+                        className="btn-primary"
+                        title="Distribui um valor recebido pelas vendas mais antigas (FIFO)"
                       >
-                        💰 Receber tudo
+                        💰 Distribuir pagamento
                       </button>
                     )}
                     {sales.length > 0 && (
@@ -832,13 +832,12 @@ function ReceberInner() {
           return (
             <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
               <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
-                <h2 className="text-2xl font-bold text-coco-900 mb-2">
-                  Receber em lote
+                <h2 className="text-2xl font-bold text-coco-900 mb-1">
+                  Distribuir pagamento
                 </h2>
                 <p className="text-coco-700 text-sm mb-4">
-                  Distribui o valor entre as vendas em aberto, da mais antiga
-                  pra mais nova. Sobra fica creditada na próxima venda em
-                  aberto.
+                  Digite o valor recebido. O sistema distribui automaticamente
+                  da venda mais antiga para a mais nova (FIFO).
                 </p>
                 <div className="space-y-3">
                   <div className="grid grid-cols-2 gap-3">

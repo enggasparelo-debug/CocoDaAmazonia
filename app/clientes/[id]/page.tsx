@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { brl, fmtDate, fmtDateOnly } from "@/lib/format";
+import { nowLocalIso } from "@/lib/datetime";
 import type {
   Customer,
   PaymentMethod,
@@ -67,6 +68,15 @@ export default function ClienteDetalhePage() {
   const [activeQuick, setActiveQuick] = useState<string>("30 dias");
   const [statusTab, setStatusTab] = useState<StatusTab>("todas");
 
+  // Bulk payment (FIFO)
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkAmount, setBulkAmount] = useState(0);
+  const [bulkMethod, setBulkMethod] = useState("");
+  const [bulkDate, setBulkDate] = useState("");
+  const [bulkNotes, setBulkNotes] = useState("");
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+
   async function load() {
     setLoading(true);
     const [c, s, m, ac] = await Promise.all([
@@ -128,6 +138,81 @@ export default function ClienteDetalhePage() {
       return;
     }
     toast.success("Venda apagada.");
+    load();
+  }
+
+  // All open (non-paid, non-cancelled) sales sorted oldest first — for FIFO bulk payment
+  const allOpenSales = useMemo(
+    () =>
+      sales
+        .filter((s) => s.status !== "paga" && s.status !== "cancelada")
+        .sort(
+          (a, b) =>
+            new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        ),
+    [sales]
+  );
+
+  function openBulk() {
+    const total = allOpenSales.reduce(
+      (s, x) => s + (Number(x.total) - Number(x.paid_amount)),
+      0
+    );
+    setBulkAmount(+total.toFixed(2));
+    setBulkMethod(methodList[0]?.id ?? "");
+    setBulkDate(nowLocalIso());
+    setBulkNotes("");
+    setBulkError(null);
+    setBulkOpen(true);
+  }
+
+  async function confirmBulk() {
+    setBulkError(null);
+    if (!bulkMethod) return setBulkError("Escolha uma forma de pagamento.");
+    if (bulkAmount <= 0) return setBulkError("Valor inválido.");
+    if (!bulkDate) return setBulkError("Informe a data do pagamento.");
+    const paidAtIso = new Date(bulkDate).toISOString();
+    if (new Date(paidAtIso).getTime() > Date.now() + 60_000) {
+      return setBulkError("A data do pagamento não pode ser no futuro.");
+    }
+
+    let remaining = +bulkAmount.toFixed(2);
+    const inserts: {
+      sale_id: string;
+      payment_method_id: string;
+      amount: number;
+      paid_at: string;
+      notes: string | null;
+    }[] = [];
+
+    for (const s of allOpenSales) {
+      if (remaining <= 0) break;
+      const rest = +(Number(s.total) - Number(s.paid_amount)).toFixed(2);
+      if (rest <= 0) continue;
+      const apply = Math.min(rest, remaining);
+      inserts.push({
+        sale_id: s.id,
+        payment_method_id: bulkMethod,
+        amount: +apply.toFixed(2),
+        paid_at: paidAtIso,
+        notes: bulkNotes || null,
+      });
+      remaining = +(remaining - apply).toFixed(2);
+    }
+
+    if (inserts.length === 0) {
+      return setBulkError("Nenhuma venda em aberto para distribuir.");
+    }
+
+    setBulkSaving(true);
+    const { error } = await supabase.from("sale_payments").insert(inserts);
+    setBulkSaving(false);
+    if (error) {
+      setBulkError(error.message);
+      return;
+    }
+    setBulkOpen(false);
+    toast.success(`Pagamento distribuído em ${inserts.length} venda(s).`);
     load();
   }
 
@@ -264,8 +349,13 @@ export default function ClienteDetalhePage() {
               📲 WhatsApp do saldo
             </a>
           )}
-          <Link href={`/receber?cliente=${customer.id}`} className="btn-primary">
-            📒 Receber
+          {allOpenSales.length > 0 && (
+            <button onClick={openBulk} className="btn-primary">
+              💰 Distribuir pagamento
+            </button>
+          )}
+          <Link href={`/receber?cliente=${customer.id}`} className="btn-secondary">
+            📒 Ver contas
           </Link>
         </div>
       </header>
@@ -628,6 +718,130 @@ export default function ClienteDetalhePage() {
           onConfirm={() => deleteSale(confirmDeleteSale)}
         />
       )}
+
+      {/* Bulk FIFO payment modal */}
+      {bulkOpen &&
+        (() => {
+          let remaining = +bulkAmount.toFixed(2);
+          let coveredCount = 0;
+          let lastPartial = 0;
+          for (const s of allOpenSales) {
+            if (remaining <= 0) break;
+            const rest = +(Number(s.total) - Number(s.paid_amount)).toFixed(2);
+            if (rest <= 0) continue;
+            const apply = Math.min(rest, remaining);
+            coveredCount++;
+            if (apply < rest) lastPartial = apply;
+            remaining = +(remaining - apply).toFixed(2);
+          }
+          return (
+            <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
+                <h2 className="text-2xl font-bold text-coco-900 mb-1">
+                  Distribuir pagamento
+                </h2>
+                <p className="text-coco-600 text-sm mb-4">
+                  Digite o valor recebido. O sistema distribui automaticamente
+                  da venda mais antiga para a mais nova (FIFO).
+                </p>
+                <div className="space-y-3">
+                  <div>
+                    <label className="label">Valor recebido</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min={0.01}
+                      className="input text-2xl font-bold"
+                      value={bulkAmount}
+                      onChange={(e) =>
+                        setBulkAmount(parseFloat(e.target.value || "0"))
+                      }
+                      autoFocus
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="label">Forma de pagamento</label>
+                      <select
+                        className="input"
+                        value={bulkMethod}
+                        onChange={(e) => setBulkMethod(e.target.value)}
+                      >
+                        {methodList.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="label">Data</label>
+                      <input
+                        type="datetime-local"
+                        className="input"
+                        value={bulkDate}
+                        onChange={(e) => setBulkDate(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="label">Observação (opcional)</label>
+                    <input
+                      className="input"
+                      value={bulkNotes}
+                      onChange={(e) => setBulkNotes(e.target.value)}
+                      placeholder="Ex.: PIX recebido, comprovante #123…"
+                    />
+                  </div>
+
+                  {bulkAmount > 0 && (
+                    <div className="bg-coco-50 border border-coco-100 rounded-xl p-3 text-sm space-y-1">
+                      <div>
+                        <strong>Vai cobrir {coveredCount} venda(s)</strong>
+                        {" "}da mais antiga para a mais nova
+                      </div>
+                      {lastPartial > 0 && (
+                        <div className="text-amber-700">
+                          · Última venda recebe pagamento parcial de {brl(lastPartial)}
+                        </div>
+                      )}
+                      {remaining > 0.01 && (
+                        <div className="text-red-600">
+                          · Sobram {brl(remaining)} — valor excede o saldo em aberto
+                        </div>
+                      )}
+                      {coveredCount === 0 && (
+                        <div className="text-red-600">
+                          · Nenhuma venda em aberto para cobrir
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {bulkError && (
+                  <p className="text-red-700 text-sm mt-3">{bulkError}</p>
+                )}
+                <div className="flex justify-end gap-2 mt-5">
+                  <button
+                    onClick={() => setBulkOpen(false)}
+                    className="btn-ghost"
+                    disabled={bulkSaving}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={confirmBulk}
+                    disabled={bulkSaving || coveredCount === 0}
+                    className="btn-primary"
+                  >
+                    {bulkSaving ? "Distribuindo…" : "Confirmar"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
     </div>
   );
 }
