@@ -24,7 +24,7 @@ alter table public.bank_accounts enable row level security;
 
 create policy "tenant_isolation_bank_accounts"
   on public.bank_accounts
-  using (tenant_id = any(public.user_tenants()));
+  using (tenant_id in (select public.user_tenants()));
 
 -- ─── 2. Sessões de conciliação ───────────────────────────────
 
@@ -48,7 +48,7 @@ alter table public.bank_reconciliations enable row level security;
 
 create policy "tenant_isolation_bank_reconciliations"
   on public.bank_reconciliations
-  using (tenant_id = any(public.user_tenants()));
+  using (tenant_id in (select public.user_tenants()));
 
 -- ─── 3. Itens da conciliação ─────────────────────────────────
 
@@ -69,7 +69,21 @@ alter table public.bank_reconciliation_items enable row level security;
 
 create policy "tenant_isolation_bank_reconciliation_items"
   on public.bank_reconciliation_items
-  using (tenant_id = any(public.user_tenants()));
+  using (tenant_id in (select public.user_tenants()));
+
+-- ─── Triggers (set_tenant_id automático no insert) ──────────
+
+drop trigger if exists trg_set_tenant_id on public.bank_accounts;
+create trigger trg_set_tenant_id before insert on public.bank_accounts
+  for each row execute function public.set_tenant_id();
+
+drop trigger if exists trg_set_tenant_id on public.bank_reconciliations;
+create trigger trg_set_tenant_id before insert on public.bank_reconciliations
+  for each row execute function public.set_tenant_id();
+
+drop trigger if exists trg_set_tenant_id on public.bank_reconciliation_items;
+create trigger trg_set_tenant_id before insert on public.bank_reconciliation_items
+  for each row execute function public.set_tenant_id();
 
 -- ─── Índices ─────────────────────────────────────────────────
 

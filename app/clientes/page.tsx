@@ -39,6 +39,7 @@ export default function ClientesPage() {
       return next;
     });
   }
+
   async function bulkDeactivate() {
     if (selectedIds.size === 0) return;
     setBulkRunning(true);
@@ -86,6 +87,28 @@ export default function ClientesPage() {
         c.document?.toLowerCase().includes(q)
     );
   }, [customers, search]);
+
+  const summary = useMemo(() => {
+    const now = Date.now();
+    let totalOpen = 0;
+    let totalOverdue = 0;
+    let customersWithBalance = 0;
+
+    Object.values(balances).forEach((b) => {
+      const open = Number(b.open_balance ?? 0);
+      if (open <= 0) return;
+      totalOpen += open;
+      customersWithBalance++;
+      if (b.oldest_open_at) {
+        const days = Math.floor(
+          (now - new Date(b.oldest_open_at).getTime()) / 86400000
+        );
+        if (days > 30) totalOverdue += open;
+      }
+    });
+
+    return { totalOpen, totalOverdue, customersWithBalance };
+  }, [balances]);
 
   async function save() {
     setError(null);
@@ -146,6 +169,58 @@ export default function ClientesPage() {
         </button>
       </header>
 
+      {/* Summary Cards */}
+      {!loading && summary.customersWithBalance > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="card border-l-4 border-amber-400 bg-amber-50 flex items-center gap-4 py-4">
+            <div className="text-3xl">📊</div>
+            <div>
+              <div className="text-xs text-amber-700 uppercase tracking-wide font-semibold">
+                Saldo Total em Aberto
+              </div>
+              <div className="text-2xl font-bold text-amber-900">
+                {brl(summary.totalOpen)}
+              </div>
+              <div className="text-xs text-amber-600 mt-0.5">
+                {summary.customersWithBalance} cliente(s) com saldo
+              </div>
+            </div>
+          </div>
+          <div className="card border-l-4 border-red-400 bg-red-50 flex items-center gap-4 py-4">
+            <div className="text-3xl">⚠️</div>
+            <div>
+              <div className="text-xs text-red-700 uppercase tracking-wide font-semibold">
+                Valor Vencido (+30 dias)
+              </div>
+              <div className="text-2xl font-bold text-red-900">
+                {brl(summary.totalOverdue)}
+              </div>
+              <div className="text-xs text-red-600 mt-0.5">
+                {summary.totalOpen > 0
+                  ? `${((summary.totalOverdue / summary.totalOpen) * 100).toFixed(0)}% do total em aberto`
+                  : "—"}
+              </div>
+            </div>
+          </div>
+          <div className="card border-l-4 border-coco-400 bg-coco-50 flex items-center gap-4 py-4">
+            <div className="text-3xl">👥</div>
+            <div>
+              <div className="text-xs text-coco-700 uppercase tracking-wide font-semibold">
+                Clientes Inadimplentes
+              </div>
+              <div className="text-2xl font-bold text-coco-900">
+                {summary.customersWithBalance}
+              </div>
+              <div className="text-xs text-coco-600 mt-0.5">
+                <Link href="/receber" className="underline hover:text-coco-800">
+                  Ver contas a receber →
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="card">
         <input
           className="input mb-4"
@@ -158,7 +233,9 @@ export default function ClientesPage() {
           <p className="text-coco-600">Carregando…</p>
         ) : filtered.length === 0 ? (
           <div className="text-center py-8 space-y-3">
-            <div className="text-5xl" aria-hidden="true">👤</div>
+            <div className="text-5xl" aria-hidden="true">
+              👤
+            </div>
             <p className="text-coco-700 font-medium">
               {search.trim()
                 ? "Nenhum cliente bate com a busca."
@@ -201,8 +278,8 @@ export default function ClientesPage() {
                   Desativar {selectedIds.size} cliente(s)?
                 </p>
                 <p className="text-red-700 text-sm mb-3">
-                  Eles ficarão inativos (não somem do histórico). Você
-                  pode reativar depois.
+                  Eles ficarão inativos (não somem do histórico). Você pode
+                  reativar depois.
                 </p>
                 <div className="flex gap-2">
                   <button
@@ -222,113 +299,138 @@ export default function ClientesPage() {
                 </div>
               </div>
             )}
-          <table className="table">
-            <thead>
-              <tr>
-                <th>
-                  <input
-                    type="checkbox"
-                    checked={
-                      filtered.length > 0 &&
-                      selectedIds.size === filtered.length
-                    }
-                    onChange={() => {
-                      if (
-                        selectedIds.size === filtered.length &&
-                        filtered.length > 0
-                      ) {
-                        setSelectedIds(new Set());
-                      } else {
-                        setSelectedIds(new Set(filtered.map((c) => c.id)));
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>
+                    <input
+                      type="checkbox"
+                      checked={
+                        filtered.length > 0 &&
+                        selectedIds.size === filtered.length
                       }
-                    }}
-                    aria-label="Selecionar todos os clientes"
-                  />
-                </th>
-                <th>Nome</th>
-                <th>Telefone</th>
-                <th>Documento</th>
-                <th>Saldo aberto</th>
-                <th>Cadastrado</th>
-                <th>Status</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((c) => {
-                const bal = balances[c.id]?.open_balance ?? 0;
-                return (
-                  <tr key={c.id}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(c.id)}
-                        onChange={() => toggleId(c.id)}
-                        aria-label={`Selecionar ${c.name}`}
-                      />
-                    </td>
-                    <td className="font-medium">
-                      <Link href={`/clientes/${c.id}`} className="text-coco-800 hover:underline">
-                        {c.name}
-                      </Link>
-                    </td>
-                    <td>{c.phone ?? "—"}</td>
-                    <td>{c.document ?? "—"}</td>
-                    <td
-                      className={
-                        bal > 0 ? "text-amber-700 font-semibold" : ""
-                      }
-                    >
-                      {brl(Number(bal))}
-                    </td>
-                    <td>{fmtDateOnly(c.created_at)}</td>
-                    <td>
-                      <span
-                        className={`badge ${
-                          c.active
-                            ? "bg-green-100 text-green-800"
-                            : "bg-gray-200 text-gray-700"
-                        }`}
-                      >
-                        {c.active ? "ativo" : "inativo"}
-                      </span>
-                    </td>
-                    <td className="text-right whitespace-nowrap">
-                      <Link
-                        href={`/clientes/${c.id}`}
-                        className="btn-ghost text-sm"
-                      >
-                        Histórico
-                      </Link>
-                      <Link
-                        href={`/receber?cliente=${c.id}`}
-                        className="btn-ghost text-sm"
-                      >
-                        Receber
-                      </Link>
-                      <button
-                        onClick={() => setEditing(c)}
-                        className="btn-ghost text-sm"
-                      >
-                        Editar
-                      </button>
-                      <button
-                        onClick={() => toggleActive(c)}
-                        disabled={togglingId === c.id}
-                        className="btn-ghost text-sm"
-                      >
-                        {togglingId === c.id
-                          ? "…"
-                          : c.active
-                          ? "Desativar"
-                          : "Ativar"}
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      onChange={() => {
+                        if (
+                          selectedIds.size === filtered.length &&
+                          filtered.length > 0
+                        ) {
+                          setSelectedIds(new Set());
+                        } else {
+                          setSelectedIds(new Set(filtered.map((c) => c.id)));
+                        }
+                      }}
+                      aria-label="Selecionar todos os clientes"
+                    />
+                  </th>
+                  <th>Nome</th>
+                  <th>Telefone</th>
+                  <th>Documento</th>
+                  <th>Saldo aberto</th>
+                  <th>Cadastrado</th>
+                  <th>Status</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((c) => {
+                  const bal = balances[c.id];
+                  const openBal = Number(bal?.open_balance ?? 0);
+                  const daysOldest = bal?.oldest_open_at
+                    ? Math.floor(
+                        (Date.now() -
+                          new Date(bal.oldest_open_at).getTime()) /
+                          86400000
+                      )
+                    : 0;
+                  const isOverdue = openBal > 0 && daysOldest > 30;
+                  return (
+                    <tr key={c.id}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(c.id)}
+                          onChange={() => toggleId(c.id)}
+                          aria-label={`Selecionar ${c.name}`}
+                        />
+                      </td>
+                      <td className="font-medium">
+                        <Link
+                          href={`/clientes/${c.id}`}
+                          className="text-coco-800 hover:underline"
+                        >
+                          {c.name}
+                        </Link>
+                      </td>
+                      <td>{c.phone ?? "—"}</td>
+                      <td>{c.document ?? "—"}</td>
+                      <td>
+                        {openBal > 0 ? (
+                          <span
+                            className={`font-semibold ${
+                              isOverdue ? "text-red-700" : "text-amber-700"
+                            }`}
+                          >
+                            {brl(openBal)}
+                            {isOverdue && (
+                              <span className="ml-1 text-xs text-red-500">
+                                ⚠ {daysOldest}d
+                              </span>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="text-green-700">{brl(0)}</span>
+                        )}
+                      </td>
+                      <td>{fmtDateOnly(c.created_at)}</td>
+                      <td>
+                        <span
+                          className={`badge ${
+                            c.active
+                              ? "bg-green-100 text-green-800"
+                              : "bg-gray-200 text-gray-700"
+                          }`}
+                        >
+                          {c.active ? "ativo" : "inativo"}
+                        </span>
+                      </td>
+                      <td className="text-right whitespace-nowrap">
+                        <Link
+                          href={`/clientes/${c.id}`}
+                          className="btn-ghost text-sm"
+                        >
+                          Histórico
+                        </Link>
+                        {openBal > 0 && (
+                          <Link
+                            href={`/receber?cliente=${c.id}`}
+                            className="btn-ghost text-sm text-amber-700"
+                          >
+                            Ver Contas
+                          </Link>
+                        )}
+                        <button
+                          onClick={() => setEditing(c)}
+                          className="btn-ghost text-sm"
+                        >
+                          Editar
+                        </button>
+                        <button
+                          onClick={() => toggleActive(c)}
+                          disabled={togglingId === c.id}
+                          className="btn-ghost text-sm"
+                        >
+                          {togglingId === c.id
+                            ? "…"
+                            : c.active
+                            ? "Desativar"
+                            : "Ativar"}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </>
         )}
       </div>
@@ -412,8 +514,8 @@ export default function ClientesPage() {
                   }
                 />
                 <p className="text-xs text-coco-600 mt-1">
-                  Aviso na venda quando o saldo aberto exceder este valor.
-                  Deixe vazio para sem limite.
+                  Aviso na venda quando o saldo aberto exceder este valor. Deixe
+                  vazio para sem limite.
                 </p>
               </div>
               <div>
@@ -439,9 +541,7 @@ export default function ClientesPage() {
               </label>
             </div>
 
-            {error && (
-              <p className="text-red-700 text-sm mt-3">{error}</p>
-            )}
+            {error && <p className="text-red-700 text-sm mt-3">{error}</p>}
 
             <div className="flex justify-end gap-2 mt-5">
               <button
