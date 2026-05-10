@@ -335,9 +335,12 @@ export type Payable = {
   id: string;
   tenant_id: string;
   supplier_name: string;
+  supplier_id: string | null;
   description: string;
   amount: number;
   due_date: string;
+  expense_date: string | null;
+  document_number: string | null;
   paid_at: string | null;
   paid_amount: number | null;
   status: PayableStatus;
@@ -346,4 +349,16 @@ export type Payable = {
   recurrent: boolean;
   created_at: string;
   created_by: string | null;
+};
+
+export type Supplier = {
+  id: string;
+  tenant_id: string;
+  name: string;
+  document: string | null;
+  phone: string | null;
+  email: string | null;
+  notes: string | null;
+  active: boolean;
+  created_at: string;
 };
