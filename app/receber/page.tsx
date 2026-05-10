@@ -24,6 +24,19 @@ function firstOfMonthIso() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
 }
 
+function monthsAgoIso(n: number) {
+  const d = new Date();
+  d.setMonth(d.getMonth() - n);
+  return d.toISOString().slice(0, 10);
+}
+
+const QUICK_FILTERS = [
+  { label: "Mês atual", from: () => firstOfMonthIso(), to: () => todayIso() },
+  { label: "3 meses", from: () => monthsAgoIso(3), to: () => todayIso() },
+  { label: "6 meses", from: () => monthsAgoIso(6), to: () => todayIso() },
+  { label: "Tudo", from: () => "2000-01-01", to: () => todayIso() },
+];
+
 type StatusTab = "abertas" | "vencidas" | "pagas" | "todas";
 
 export default function ReceberPage() {
@@ -57,6 +70,7 @@ function ReceberInner() {
 
   const [dateFrom, setDateFrom] = useState<string>(firstOfMonthIso());
   const [dateTo, setDateTo] = useState<string>(todayIso());
+  const [activeQuick, setActiveQuick] = useState<string>("Mês atual");
   const [statusTab, setStatusTab] = useState<StatusTab>("abertas");
 
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -565,27 +579,49 @@ function ReceberInner() {
 
           {/* Date range filter */}
           {selected && (
-            <div className="mb-3 flex flex-wrap items-end gap-3">
-              <div>
-                <label className="label">Data início</label>
-                <input
-                  type="date"
-                  className="input"
-                  value={dateFrom}
-                  max={dateTo}
-                  onChange={(e) => setDateFrom(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="label">Data fim</label>
-                <input
-                  type="date"
-                  className="input"
-                  value={dateTo}
-                  min={dateFrom}
-                  max={todayIso()}
-                  onChange={(e) => setDateTo(e.target.value)}
-                />
+            <div className="mb-3 space-y-2">
+              <div className="flex flex-wrap gap-2">
+                {QUICK_FILTERS.map((qf) => (
+                  <button
+                    key={qf.label}
+                    onClick={() => {
+                      setDateFrom(qf.from());
+                      setDateTo(qf.to());
+                      setActiveQuick(qf.label);
+                    }}
+                    className={`px-3 py-1 rounded-lg border text-xs font-medium transition-all ${
+                      activeQuick === qf.label
+                        ? "bg-coco-600 text-white border-coco-600"
+                        : "bg-white text-coco-600 border-coco-200 hover:bg-coco-50"
+                    }`}
+                  >
+                    {qf.label}
+                  </button>
+                ))}
+                <div className="flex gap-2 ml-auto flex-wrap items-center">
+                  <input
+                    type="date"
+                    className="input text-xs py-1 h-auto"
+                    value={dateFrom}
+                    max={dateTo}
+                    onChange={(e) => {
+                      setDateFrom(e.target.value);
+                      setActiveQuick("");
+                    }}
+                  />
+                  <span className="text-coco-500 text-xs">até</span>
+                  <input
+                    type="date"
+                    className="input text-xs py-1 h-auto"
+                    value={dateTo}
+                    min={dateFrom}
+                    max={todayIso()}
+                    onChange={(e) => {
+                      setDateTo(e.target.value);
+                      setActiveQuick("");
+                    }}
+                  />
+                </div>
               </div>
             </div>
           )}
