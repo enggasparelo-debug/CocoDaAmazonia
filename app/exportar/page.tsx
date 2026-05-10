@@ -56,7 +56,7 @@ export default function ExportarPage() {
         .lte("created_at", endIso)
         .order("created_at");
 
-      const sales = (salesRaw ?? []) as {
+      const sales = (salesRaw ?? []) as unknown as {
         id: string;
         code: number;
         created_at: string;
@@ -65,7 +65,7 @@ export default function ExportarPage() {
         discount: number;
         total: number;
         status: string;
-        customer: { name: string } | null;
+        customer: { name: string } | { name: string }[] | null;
       }[];
 
       // Fetch all payments for these sales to get payment methods
@@ -76,8 +76,8 @@ export default function ExportarPage() {
           .select("sale_id, method:payment_methods(name)")
           .in("sale_id", sales.map((s) => s.id));
 
-        for (const p of (pmts ?? []) as { sale_id: string; method: { name: string } | null }[]) {
-          const name = p.method?.name ?? "—";
+        for (const p of (pmts ?? []) as unknown as { sale_id: string; method: { name: string } | { name: string }[] | null }[]) {
+          const name = (Array.isArray(p.method) ? p.method[0]?.name : p.method?.name) ?? "—";
           if (!methodsBySale[p.sale_id]) methodsBySale[p.sale_id] = [];
           if (!methodsBySale[p.sale_id].includes(name)) methodsBySale[p.sale_id].push(name);
         }
@@ -86,7 +86,7 @@ export default function ExportarPage() {
       return sales.map((s) => ({
         nº_venda: s.code,
         data: fmtDateOnly(s.created_at),
-        cliente: s.customer?.name ?? "Consumidor",
+        cliente: (Array.isArray(s.customer) ? s.customer[0]?.name : s.customer?.name) ?? "Consumidor",
         produto: "Coco Verde",
         qtd: s.quantity,
         unitario: fmtBrNumber(Number(s.unit_price)),
@@ -105,19 +105,19 @@ export default function ExportarPage() {
         .lte("paid_at", endIso)
         .order("paid_at");
 
-      return ((raw ?? []) as {
+      return ((raw ?? []) as unknown as {
         paid_at: string;
         category: string | null;
         description: string;
         amount: number;
         notes: string | null;
-        method: { name: string } | null;
+        method: { name: string } | { name: string }[] | null;
       }[]).map((e) => ({
         data: fmtDateOnly(e.paid_at),
         categoria: e.category ?? "",
         descricao: e.description ?? "",
         valor: fmtBrNumber(Number(e.amount)),
-        forma_pagamento: e.method?.name ?? "—",
+        forma_pagamento: (Array.isArray(e.method) ? e.method[0]?.name : e.method?.name) ?? "—",
         observacao: (e.notes ?? "").replace(/\n/g, " "),
       }));
     }
@@ -130,17 +130,17 @@ export default function ExportarPage() {
         .lte("paid_at", endIso)
         .order("paid_at");
 
-      return ((raw ?? []) as {
+      return ((raw ?? []) as unknown as {
         paid_at: string;
         amount: number;
-        sale: { code: number; customer: { name: string } | null } | null;
-        method: { name: string } | null;
+        sale: { code: number; customer: { name: string } | { name: string }[] | null } | null;
+        method: { name: string } | { name: string }[] | null;
       }[]).map((p) => ({
         data: fmtDateOnly(p.paid_at),
-        cliente: p.sale?.customer?.name ?? "Consumidor",
+        cliente: (Array.isArray(p.sale?.customer) ? p.sale?.customer[0]?.name : (p.sale?.customer as { name: string } | null)?.name) ?? "Consumidor",
         "nº_venda": p.sale?.code ?? "",
         valor: fmtBrNumber(Number(p.amount)),
-        forma_pagamento: p.method?.name ?? "—",
+        forma_pagamento: (Array.isArray(p.method) ? p.method[0]?.name : p.method?.name) ?? "—",
       }));
     }
 

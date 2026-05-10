@@ -116,8 +116,8 @@ export default function FinanceiroPage() {
 
     setMethods((m.data as PaymentMethod[]) ?? []);
     setRows((p.data as FlowRow[]) ?? []);
-    setSalesPeriod((sales.data as SalePeriod[]) ?? []);
-    setPmrPayments((pmr.data as PmrPayment[]) ?? []);
+    setSalesPeriod((sales.data as unknown as SalePeriod[]) ?? []);
+    setPmrPayments((pmr.data as unknown as PmrPayment[]) ?? []);
     setCustomerBalances((balances.data as CustomerBalance[]) ?? []);
     setInvMovements((inv.data as InvMovement[]) ?? []);
     setLoading(false);

@@ -205,7 +205,7 @@ export default function CargaPage() {
             <div>
               <div className="font-medium">{e.description}</div>
               <div className="text-xs text-coco-600">
-                {e.category ?? "—"} · {fmtDate(e.paid_at)}
+                {e.category ?? "—"} · {e.paid_at ? fmtDate(e.paid_at) : "—"}
               </div>
             </div>
             <div className="font-semibold text-red-700">
