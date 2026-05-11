@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { useToast } from "@/components/Toast";
 import type { Supplier } from "@/lib/types";
@@ -138,6 +139,12 @@ export default function FornecedoresPage() {
                 )}
               </div>
               <div className="flex gap-2 shrink-0">
+                <Link
+                  href={`/fornecedores/${s.id}`}
+                  className="btn-secondary text-xs px-3 py-1"
+                >
+                  Analytics
+                </Link>
                 <button
                   onClick={() => setEditing(s)}
                   className="btn-secondary text-xs px-3 py-1"
