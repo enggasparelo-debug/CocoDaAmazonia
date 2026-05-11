@@ -18,6 +18,9 @@ const empty: Partial<Expense> = {
   notes: "",
   payment_method_id: null,
   due_date: null,
+  doc_number: "",
+  is_nf: false,
+  payee: "",
 };
 
 function todayStr() {
@@ -187,6 +190,9 @@ export default function DespesasPage() {
       due_date: dueDateStr || null,
       status: isOpenExpense ? "open" : "paid",
       paid_at: isOpenExpense ? null : paidAt,
+      doc_number: editing.doc_number?.trim() || null,
+      is_nf: !!editing.is_nf,
+      payee: editing.payee?.trim() || null,
     };
 
     const op = editing.id
@@ -224,6 +230,9 @@ export default function DespesasPage() {
     categoria: e.category ?? "",
     valor: Number(e.amount).toFixed(2),
     forma: methods.find((m) => m.id === e.payment_method_id)?.name ?? "",
+    doc_numero: e.doc_number ?? "",
+    nf: e.is_nf ? "Sim" : "Não",
+    favorecido: e.payee ?? "",
     observacao: (e.notes ?? "").replace(/[\n]/g, " "),
   }));
 
@@ -376,6 +385,7 @@ export default function DespesasPage() {
                 <th>Vencimento</th>
                 <th>Descrição</th>
                 <th>Categoria</th>
+                <th>Doc. / Favorecido</th>
                 <th>Status</th>
                 <th className="text-right">Valor</th>
                 <th></th>
@@ -402,6 +412,21 @@ export default function DespesasPage() {
                     </td>
                     <td>{e.description}</td>
                     <td>{e.category || "—"}</td>
+                    <td className="text-xs text-coco-700">
+                      {e.doc_number && (
+                        <span>
+                          {e.is_nf && (
+                            <span className="bg-coco-100 text-coco-800 px-1.5 py-0.5 rounded mr-1 font-semibold">
+                              NF
+                            </span>
+                          )}
+                          #{e.doc_number}
+                        </span>
+                      )}
+                      {e.doc_number && e.payee && <span> · </span>}
+                      {e.payee}
+                      {!e.doc_number && !e.payee && "—"}
+                    </td>
                     <td>{statusBadge(e)}</td>
                     <td className="text-right font-semibold text-red-700">
                       {brl(Number(e.amount))}
@@ -562,6 +587,40 @@ export default function DespesasPage() {
                   ))}
                 </select>
               </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Nº do documento</label>
+                  <input
+                    className="input"
+                    value={editing.doc_number ?? ""}
+                    onChange={(e) =>
+                      setEditing({ ...editing, doc_number: e.target.value })
+                    }
+                    placeholder="Ex.: 0123 ou NF 4567"
+                  />
+                </div>
+                <div>
+                  <label className="label">Favorecido</label>
+                  <input
+                    className="input"
+                    value={editing.payee ?? ""}
+                    onChange={(e) =>
+                      setEditing({ ...editing, payee: e.target.value })
+                    }
+                    placeholder="Ex.: Posto Shell, João da Silva"
+                  />
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={!!editing.is_nf}
+                  onChange={(e) =>
+                    setEditing({ ...editing, is_nf: e.target.checked })
+                  }
+                />
+                Documento é Nota Fiscal (NF)
+              </label>
               <div>
                 <label className="label">Observação</label>
                 <textarea

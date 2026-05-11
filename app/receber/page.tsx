@@ -45,6 +45,13 @@ function ReceberInner() {
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
   const [selected, setSelected] = useState<string>(initialCustomer);
   const [sales, setSales] = useState<Sale[]>([]);
+  // Estatísticas lifetime do cliente selecionado (todas as vendas não
+  // canceladas — usado pra summary "screenshotável" no rodapé).
+  const [customerLifetime, setCustomerLifetime] = useState<{
+    cocos: number;
+    total: number;
+    sales: number;
+  } | null>(null);
   const [allOpenSales, setAllOpenSales] = useState<
     { id: string; created_at: string; total: number; paid_amount: number }[]
   >([]);
@@ -105,6 +112,7 @@ function ReceberInner() {
     async (custId: string, tab: StatusTab, from: string, to: string) => {
       if (!custId) {
         setSales([]);
+        setCustomerLifetime(null);
         return;
       }
 
@@ -124,7 +132,14 @@ function ReceberInner() {
         query = query.neq("status", "paga");
       }
 
-      const { data } = await query;
+      const [{ data }, allQ] = await Promise.all([
+        query,
+        supabase
+          .from("sales")
+          .select("quantity,total")
+          .eq("customer_id", custId)
+          .is("canceled_at", null),
+      ]);
       let rows = (data as Sale[]) ?? [];
 
       if (tab === "vencidas") {
@@ -135,6 +150,13 @@ function ReceberInner() {
       }
 
       setSales(rows);
+      const allRows =
+        (allQ.data as { quantity: number; total: number }[] | null) ?? [];
+      setCustomerLifetime({
+        cocos: allRows.reduce((s, r) => s + Number(r.quantity ?? 0), 0),
+        total: allRows.reduce((s, r) => s + Number(r.total ?? 0), 0),
+        sales: allRows.length,
+      });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
@@ -555,6 +577,17 @@ function ReceberInner() {
                         📲 WhatsApp
                       </a>
                     )}
+                    {openSales.length > 0 && (
+                      <a
+                        href={`/cobranca/${selected}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn-secondary"
+                        title="Abre uma página pronta pra imprimir / salvar como PDF"
+                      >
+                        📄 PDF de cobrança
+                      </a>
+                    )}
                     <a href={`/clientes/${selected}`} className="btn-ghost">
                       Histórico
                     </a>
@@ -618,6 +651,7 @@ function ReceberInner() {
               Nenhuma venda encontrada com os filtros selecionados.
             </p>
           ) : (
+            <>
             <table className="table">
               <thead>
                 <tr>
@@ -700,6 +734,72 @@ function ReceberInner() {
                 </tfoot>
               )}
             </table>
+
+            {openSales.length > 0 && (() => {
+              const cust = customers.find((c) => c.id === selected);
+              const bal = balances.find((b) => b.customer_id === selected);
+              const openQty = openSales.reduce(
+                (s, x) => s + Number(x.quantity ?? 0),
+                0
+              );
+              const openTotal = openSales.reduce(
+                (s, x) =>
+                  s +
+                  (Number(x.total ?? 0) - Number(x.paid_amount ?? 0)),
+                0
+              );
+              const oldestDays = bal?.oldest_open_at
+                ? Math.floor(
+                    (Date.now() -
+                      new Date(bal.oldest_open_at).getTime()) /
+                      86400000
+                  )
+                : 0;
+              return (
+                <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                  <div className="flex items-baseline justify-between flex-wrap gap-2 mb-3">
+                    <h3 className="font-bold text-amber-900 text-lg">
+                      Resumo da cobrança · {cust?.name ?? "—"}
+                    </h3>
+                    {bal?.oldest_open_at && (
+                      <span className="text-xs text-amber-800">
+                        Mais antiga em aberto:{" "}
+                        {fmtDateOnly(bal.oldest_open_at)}{" "}
+                        {oldestDays > 0 && (
+                          <strong>(há {oldestDays} dia{oldestDays === 1 ? "" : "s"})</strong>
+                        )}
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <SummaryStat
+                      label="Cocos em aberto"
+                      value={openQty.toLocaleString("pt-BR")}
+                      emphasis
+                    />
+                    <SummaryStat
+                      label="Valor em aberto"
+                      value={brl(openTotal)}
+                      emphasis
+                    />
+                    <SummaryStat
+                      label="Vendas em aberto"
+                      value={String(openSales.length)}
+                    />
+                    {customerLifetime && (
+                      <SummaryStat
+                        label="Total comprado"
+                        value={`${customerLifetime.cocos.toLocaleString(
+                          "pt-BR"
+                        )} cocos`}
+                        sub={brl(customerLifetime.total)}
+                      />
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+            </>
           )}
         </div>
       </div>
@@ -925,6 +1025,34 @@ function SaleStatusBadge({
     <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-yellow-100 text-yellow-800">
       Aberta
     </span>
+  );
+}
+
+function SummaryStat({
+  label,
+  value,
+  sub,
+  emphasis,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  emphasis?: boolean;
+}) {
+  return (
+    <div className="rounded-xl bg-white border border-amber-200 p-3">
+      <div className="text-[11px] uppercase tracking-wider text-amber-800">
+        {label}
+      </div>
+      <div
+        className={`mt-1 ${
+          emphasis ? "text-2xl font-bold" : "text-lg font-semibold"
+        } text-amber-900`}
+      >
+        {value}
+      </div>
+      {sub && <div className="text-xs text-amber-700">{sub}</div>}
+    </div>
   );
 }
 

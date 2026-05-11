@@ -152,6 +152,9 @@ export type Expense = {
   payment_method_id: string | null;
   notes: string | null;
   carga_id?: string | null;
+  doc_number?: string | null;
+  is_nf?: boolean;
+  payee?: string | null;
 };
 
 export type InventoryMovementKind =

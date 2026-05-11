@@ -54,6 +54,8 @@ por ambiente.
 | 22 | `migration_v21_contas_a_pagar.sql` | Tabela `payables` (contas a pagar) + view `cash_flow_projection`. |
 | 23 | `migration_v22_despesas_ap.sql` | Evolução de despesas com alertas de vencimento. |
 | 24 | `migration_v23_customer_profitability.sql` | View `customer_profitability` com LTV, ticket médio, frequência e margem por cliente. |
+| 25 | `migration_v24_fornecedores.sql` | Tabela `suppliers` (cadastro de fornecedores) + novos campos em `payables`. |
+| 26 | `migration_v25_expense_doc_fields.sql` | Despesas ganham `doc_number`, `is_nf`, `payee`. |
 
 ## Pós-migração (Edge Functions)
 
