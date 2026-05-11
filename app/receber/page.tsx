@@ -24,6 +24,20 @@ function firstOfMonthIso() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
 }
 
+function daysAgoIso(n: number) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString().slice(0, 10);
+}
+
+const QUICK_FILTERS = [
+  { label: "7 dias", from: () => daysAgoIso(7), to: () => todayIso() },
+  { label: "15 dias", from: () => daysAgoIso(15), to: () => todayIso() },
+  { label: "21 dias", from: () => daysAgoIso(21), to: () => todayIso() },
+  { label: "30 dias", from: () => daysAgoIso(30), to: () => todayIso() },
+  { label: "Tudo", from: () => "2000-01-01", to: () => todayIso() },
+];
+
 type StatusTab = "abertas" | "vencidas" | "pagas" | "todas";
 
 export default function ReceberPage() {
@@ -62,8 +76,9 @@ function ReceberInner() {
   const [payNotes, setPayNotes] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
 
-  const [dateFrom, setDateFrom] = useState<string>(firstOfMonthIso());
+  const [dateFrom, setDateFrom] = useState<string>(daysAgoIso(30));
   const [dateTo, setDateTo] = useState<string>(todayIso());
+  const [activeQuick, setActiveQuick] = useState<string>("30 dias");
   const [statusTab, setStatusTab] = useState<StatusTab>("abertas");
 
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -552,10 +567,10 @@ function ReceberInner() {
                     {openSales.length > 0 && (
                       <button
                         onClick={openBulk}
-                        className="btn-secondary"
-                        title="Distribui um pagamento entre as vendas mais antigas"
+                        className="btn-primary"
+                        title="Distribui um valor recebido pelas vendas mais antigas (FIFO)"
                       >
-                        💰 Receber tudo
+                        💰 Distribuir pagamento
                       </button>
                     )}
                     {sales.length > 0 && (
@@ -598,27 +613,49 @@ function ReceberInner() {
 
           {/* Date range filter */}
           {selected && (
-            <div className="mb-3 flex flex-wrap items-end gap-3">
-              <div>
-                <label className="label">Data início</label>
-                <input
-                  type="date"
-                  className="input"
-                  value={dateFrom}
-                  max={dateTo}
-                  onChange={(e) => setDateFrom(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="label">Data fim</label>
-                <input
-                  type="date"
-                  className="input"
-                  value={dateTo}
-                  min={dateFrom}
-                  max={todayIso()}
-                  onChange={(e) => setDateTo(e.target.value)}
-                />
+            <div className="mb-3 space-y-2">
+              <div className="flex flex-wrap gap-2">
+                {QUICK_FILTERS.map((qf) => (
+                  <button
+                    key={qf.label}
+                    onClick={() => {
+                      setDateFrom(qf.from());
+                      setDateTo(qf.to());
+                      setActiveQuick(qf.label);
+                    }}
+                    className={`px-3 py-1 rounded-lg border text-xs font-medium transition-all ${
+                      activeQuick === qf.label
+                        ? "bg-coco-600 text-white border-coco-600"
+                        : "bg-white text-coco-600 border-coco-200 hover:bg-coco-50"
+                    }`}
+                  >
+                    {qf.label}
+                  </button>
+                ))}
+                <div className="flex gap-2 ml-auto flex-wrap items-center">
+                  <input
+                    type="date"
+                    className="input text-xs py-1 h-auto"
+                    value={dateFrom}
+                    max={dateTo}
+                    onChange={(e) => {
+                      setDateFrom(e.target.value);
+                      setActiveQuick("");
+                    }}
+                  />
+                  <span className="text-coco-500 text-xs">até</span>
+                  <input
+                    type="date"
+                    className="input text-xs py-1 h-auto"
+                    value={dateTo}
+                    min={dateFrom}
+                    max={todayIso()}
+                    onChange={(e) => {
+                      setDateTo(e.target.value);
+                      setActiveQuick("");
+                    }}
+                  />
+                </div>
               </div>
             </div>
           )}
@@ -895,13 +932,12 @@ function ReceberInner() {
           return (
             <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
               <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
-                <h2 className="text-2xl font-bold text-coco-900 mb-2">
-                  Receber em lote
+                <h2 className="text-2xl font-bold text-coco-900 mb-1">
+                  Distribuir pagamento
                 </h2>
                 <p className="text-coco-700 text-sm mb-4">
-                  Distribui o valor entre as vendas em aberto, da mais antiga
-                  pra mais nova. Sobra fica creditada na próxima venda em
-                  aberto.
+                  Digite o valor recebido. O sistema distribui automaticamente
+                  da venda mais antiga para a mais nova (FIFO).
                 </p>
                 <div className="space-y-3">
                   <div className="grid grid-cols-2 gap-3">
