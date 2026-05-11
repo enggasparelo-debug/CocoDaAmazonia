@@ -374,6 +374,11 @@ export default function PagarPage() {
                       <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">
                         Despesa
                       </span>
+                      {e.is_nf && (
+                        <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">
+                          NF
+                        </span>
+                      )}
                       {e.category && (
                         <span className="text-xs bg-coco-100 text-coco-700 px-2 py-0.5 rounded-full">
                           {e.category}
@@ -383,9 +388,17 @@ export default function PagarPage() {
                         {s.text}
                       </span>
                     </div>
-                    {e.notes && (
-                      <div className="text-xs text-gray-400 mt-0.5 truncate">{e.notes}</div>
-                    )}
+                    <div className="flex gap-3 mt-0.5 flex-wrap">
+                      {e.doc_number && (
+                        <span className="text-xs text-gray-400">Doc: {e.doc_number}</span>
+                      )}
+                      {e.payee && (
+                        <span className="text-xs text-gray-400">Favorecido: {e.payee}</span>
+                      )}
+                      {e.notes && (
+                        <span className="text-xs text-gray-400 truncate">{e.notes}</span>
+                      )}
+                    </div>
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
                     <div className="text-right">
