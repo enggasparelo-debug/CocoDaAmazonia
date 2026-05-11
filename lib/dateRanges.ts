@@ -6,7 +6,13 @@ export type DateRangePreset =
   | "ontem"
   | "amanha"
   | "semana-atual"
-  | "semana-passada";
+  | "semana-passada"
+  | "7-dias"
+  | "14-dias"
+  | "21-dias"
+  | "30-dias"
+  | "ano-atual"
+  | "tudo";
 
 export const PRESET_LABELS: Record<DateRangePreset, string> = {
   hoje: "Hoje",
@@ -14,7 +20,16 @@ export const PRESET_LABELS: Record<DateRangePreset, string> = {
   amanha: "Amanhã",
   "semana-atual": "Semana atual",
   "semana-passada": "Semana passada",
+  "7-dias": "7 dias",
+  "14-dias": "14 dias",
+  "21-dias": "21 dias",
+  "30-dias": "30 dias",
+  "ano-atual": "Ano atual",
+  tudo: "Tudo",
 };
+
+// Data inicial usada pelo preset "Tudo" (sem limite inferior prático).
+export const ALL_TIME_START = "2000-01-01";
 
 export function fmtYmd(d: Date): string {
   const y = d.getFullYear();
@@ -59,11 +74,37 @@ export function presetRange(
     end.setDate(start.getDate() + 6);
     return { from: fmtYmd(start), to: fmtYmd(end) };
   }
-  // semana-passada
-  const startThis = startOfWeekMonday(today);
-  const start = new Date(startThis);
-  start.setDate(startThis.getDate() - 7);
-  const end = new Date(startThis);
-  end.setDate(startThis.getDate() - 1);
-  return { from: fmtYmd(start), to: fmtYmd(end) };
+  if (preset === "semana-passada") {
+    const startThis = startOfWeekMonday(today);
+    const start = new Date(startThis);
+    start.setDate(startThis.getDate() - 7);
+    const end = new Date(startThis);
+    end.setDate(startThis.getDate() - 1);
+    return { from: fmtYmd(start), to: fmtYmd(end) };
+  }
+  if (
+    preset === "7-dias" ||
+    preset === "14-dias" ||
+    preset === "21-dias" ||
+    preset === "30-dias"
+  ) {
+    const days =
+      preset === "7-dias"
+        ? 7
+        : preset === "14-dias"
+        ? 14
+        : preset === "21-dias"
+        ? 21
+        : 30;
+    const start = new Date(today);
+    start.setDate(today.getDate() - (days - 1));
+    return { from: fmtYmd(start), to: fmtYmd(today) };
+  }
+  if (preset === "ano-atual") {
+    const start = new Date(today.getFullYear(), 0, 1);
+    const end = new Date(today.getFullYear(), 11, 31);
+    return { from: fmtYmd(start), to: fmtYmd(end) };
+  }
+  // tudo
+  return { from: ALL_TIME_START, to: fmtYmd(today) };
 }

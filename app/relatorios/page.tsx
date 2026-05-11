@@ -29,6 +29,12 @@ const PRESETS: DateRangePreset[] = [
   "amanha",
   "semana-atual",
   "semana-passada",
+  "7-dias",
+  "14-dias",
+  "21-dias",
+  "30-dias",
+  "ano-atual",
+  "tudo",
 ];
 
 function todayStr() {
