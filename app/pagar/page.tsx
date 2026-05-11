@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { brl } from "@/lib/format";
 import { useToast } from "@/components/Toast";
-import type { Payable, Supplier } from "@/lib/types";
+import type { Payable, Expense, Supplier } from "@/lib/types";
 
 const CATEGORIES = [
   "Fornecedor de Coco",
@@ -41,10 +41,37 @@ function daysUntilDue(dueDateStr: string) {
   return Math.round((due.getTime() - today.getTime()) / 86_400_000);
 }
 
-function statusLabel(p: Payable) {
-  if (p.status === "pago") return { text: "Pago", cls: "bg-green-100 text-green-800" };
-  if (p.status === "cancelado") return { text: "Cancelado", cls: "bg-gray-100 text-gray-600" };
-  const d = daysUntilDue(p.due_date);
+type UnifiedItem =
+  | { _kind: "payable"; _raw: Payable }
+  | { _kind: "expense"; _raw: Expense };
+
+function unifiedDueDate(item: UnifiedItem): string | null {
+  return item._raw.due_date ?? null;
+}
+
+function unifiedAmount(item: UnifiedItem): number {
+  return Number(item._raw.amount);
+}
+
+function unifiedIsPending(item: UnifiedItem): boolean {
+  if (item._kind === "payable")
+    return item._raw.status === "pendente" || item._raw.status === "vencido";
+  return item._raw.status === "open";
+}
+
+function unifiedIsPaid(item: UnifiedItem): boolean {
+  if (item._kind === "payable") return item._raw.status === "pago";
+  return item._raw.status === "paid";
+}
+
+function statusLabel(item: UnifiedItem) {
+  if (unifiedIsPaid(item))
+    return { text: "Pago", cls: "bg-green-100 text-green-800" };
+  if (item._kind === "payable" && item._raw.status === "cancelado")
+    return { text: "Cancelado", cls: "bg-gray-100 text-gray-600" };
+  const due = unifiedDueDate(item);
+  if (!due) return { text: "Em Aberto", cls: "bg-yellow-100 text-yellow-800" };
+  const d = daysUntilDue(due);
   if (d < 0) return { text: `Vencido há ${-d}d`, cls: "bg-red-100 text-red-800" };
   if (d === 0) return { text: "Vence hoje", cls: "bg-orange-100 text-orange-800" };
   if (d <= 7) return { text: `Vence em ${d}d`, cls: "bg-yellow-100 text-yellow-800" };
@@ -70,32 +97,30 @@ export default function PagarPage() {
   const toast = useToast();
 
   const [payables, setPayables] = useState<Payable[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Partial<Payable> | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>("pendente");
 
-  // projeção de caixa
   const [horizon, setHorizon] = useState(30);
   const [receivables, setReceivables] = useState<{ amount: number }[]>([]);
 
   async function load() {
     setLoading(true);
-    const [pRes, rRes, sRes] = await Promise.all([
-      supabase
-        .from("payables")
-        .select("*")
-        .order("due_date", { ascending: true }),
+    const [pRes, rRes, sRes, eRes] = await Promise.all([
+      supabase.from("payables").select("*").order("due_date", { ascending: true }),
       supabase
         .from("sales")
         .select("total, paid_amount")
         .neq("status", "paga")
         .is("canceled_at", null),
+      supabase.from("suppliers").select("*").eq("active", true).order("name"),
       supabase
-        .from("suppliers")
+        .from("expenses")
         .select("*")
-        .eq("active", true)
-        .order("name"),
+        .is("carga_id", null)
+        .order("due_date", { ascending: true }),
     ]);
     setPayables((pRes.data as Payable[]) ?? []);
     setReceivables(
@@ -104,6 +129,7 @@ export default function PagarPage() {
       )
     );
     setSuppliers((sRes.data as Supplier[]) ?? []);
+    setExpenses((eRes.data as Expense[]) ?? []);
     setLoading(false);
   }
 
@@ -111,57 +137,71 @@ export default function PagarPage() {
     load();
   }, []);
 
+  const unified = useMemo<UnifiedItem[]>(() => {
+    const p = payables.map((r) => ({ _kind: "payable" as const, _raw: r }));
+    const e = expenses.map((r) => ({ _kind: "expense" as const, _raw: r }));
+    return [...p, ...e].sort((a, b) => {
+      const da = unifiedDueDate(a) ?? "9999-99-99";
+      const db = unifiedDueDate(b) ?? "9999-99-99";
+      return da.localeCompare(db);
+    });
+  }, [payables, expenses]);
+
   const filtered = useMemo(() => {
-    return payables.filter((p) => {
-      if (filterStatus === "pendente") return p.status === "pendente" || p.status === "vencido";
-      if (filterStatus === "pago") return p.status === "pago";
+    return unified.filter((item) => {
+      if (filterStatus === "pendente") return unifiedIsPending(item);
+      if (filterStatus === "pago") return unifiedIsPaid(item);
       return true;
     });
-  }, [payables, filterStatus]);
+  }, [unified, filterStatus]);
 
-  // Resumos
   const summary = useMemo(() => {
-    const pending = payables.filter((p) => p.status === "pendente" || p.status === "vencido");
-    const overdue = pending.filter((p) => daysUntilDue(p.due_date) < 0);
-    const dueThisWeek = pending.filter((p) => {
-      const d = daysUntilDue(p.due_date);
+    const pending = unified.filter(unifiedIsPending);
+    const overdue = pending.filter((item) => {
+      const due = unifiedDueDate(item);
+      return due && daysUntilDue(due) < 0;
+    });
+    const dueThisWeek = pending.filter((item) => {
+      const due = unifiedDueDate(item);
+      if (!due) return false;
+      const d = daysUntilDue(due);
       return d >= 0 && d <= 7;
     });
     return {
-      totalPending: pending.reduce((s, p) => s + Number(p.amount), 0),
-      totalOverdue: overdue.reduce((s, p) => s + Number(p.amount), 0),
-      totalDueThisWeek: dueThisWeek.reduce((s, p) => s + Number(p.amount), 0),
+      totalPending: pending.reduce((s, item) => s + unifiedAmount(item), 0),
+      totalOverdue: overdue.reduce((s, item) => s + unifiedAmount(item), 0),
+      totalDueThisWeek: dueThisWeek.reduce((s, item) => s + unifiedAmount(item), 0),
       countOverdue: overdue.length,
     };
-  }, [payables]);
+  }, [unified]);
 
-  // Projeção de caixa
   const projection = useMemo(() => {
     const cutoff = addDays(todayStr(), horizon);
     const totalReceivables = receivables.reduce((s, r) => s + r.amount, 0);
-    const payablesInHorizon = payables
-      .filter(
-        (p) =>
-          (p.status === "pendente" || p.status === "vencido") &&
-          p.due_date <= cutoff
-      )
-      .reduce((s, p) => s + Number(p.amount), 0);
+    const payablesInHorizon = unified
+      .filter((item) => {
+        const due = unifiedDueDate(item);
+        return unifiedIsPending(item) && due && due <= cutoff;
+      })
+      .reduce((s, item) => s + unifiedAmount(item), 0);
     return {
       receivables: totalReceivables,
       payables: payablesInHorizon,
       net: totalReceivables - payablesInHorizon,
     };
-  }, [payables, receivables, horizon]);
+  }, [unified, receivables, horizon]);
 
   async function save() {
-    if (!editing?.supplier_name?.trim() && !editing?.supplier_id)
-      return toast.error("Fornecedor obrigatório.");
     if (!editing?.description?.trim()) return toast.error("Descrição obrigatória.");
     if (!editing.amount || Number(editing.amount) <= 0) return toast.error("Valor inválido.");
     if (!editing.due_date) return toast.error("Data de vencimento obrigatória.");
 
+    const selectedSupplier = editing.supplier_id
+      ? suppliers.find((s) => s.id === editing.supplier_id)
+      : null;
+
     const payload = {
-      supplier_name: editing.supplier_name!.trim(),
+      supplier_name: selectedSupplier?.name ?? editing.supplier_name?.trim() ?? "",
       supplier_id: editing.supplier_id || null,
       description: editing.description!.trim(),
       amount: Number(editing.amount),
@@ -183,7 +223,7 @@ export default function PagarPage() {
     load();
   }
 
-  async function markPaid(p: Payable) {
+  async function markPayablePaid(p: Payable) {
     const { error } = await supabase
       .from("payables")
       .update({ status: "pago", paid_at: new Date().toISOString(), paid_amount: p.amount })
@@ -193,7 +233,17 @@ export default function PagarPage() {
     load();
   }
 
-  async function cancel(id: string) {
+  async function markExpensePaid(e: Expense) {
+    const { error } = await supabase
+      .from("expenses")
+      .update({ status: "paid", paid_at: new Date().toISOString() })
+      .eq("id", e.id);
+    if (error) return toast.error(error.message);
+    toast.success("Despesa marcada como paga.");
+    load();
+  }
+
+  async function cancelPayable(id: string) {
     if (!confirm("Cancelar esta conta?")) return;
     const { error } = await supabase
       .from("payables")
@@ -204,14 +254,19 @@ export default function PagarPage() {
     load();
   }
 
+  async function deleteExpense(id: string) {
+    if (!confirm("Apagar esta despesa?")) return;
+    const { error } = await supabase.from("expenses").delete().eq("id", id);
+    if (error) return toast.error(error.message);
+    toast.success("Despesa apagada.");
+    load();
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-2xl font-bold text-coco-800">Contas a Pagar</h1>
-        <button
-          onClick={() => setEditing(emptyPayable())}
-          className="btn-primary"
-        >
+        <button onClick={() => setEditing(emptyPayable())} className="btn-primary">
           + Nova Conta
         </button>
       </div>
@@ -297,21 +352,96 @@ export default function PagarPage() {
       {loading ? (
         <div className="text-coco-700">Carregando…</div>
       ) : filtered.length === 0 ? (
-        <div className="text-gray-400 text-center py-12">
-          Nenhuma conta encontrada.
-        </div>
+        <div className="text-gray-400 text-center py-12">Nenhuma conta encontrada.</div>
       ) : (
         <div className="space-y-2">
-          {filtered.map((p) => {
-            const s = statusLabel(p);
+          {filtered.map((item) => {
+            const s = statusLabel(item);
+            const due = unifiedDueDate(item);
+            const amount = unifiedAmount(item);
+            const isPending = unifiedIsPending(item);
+
+            if (item._kind === "expense") {
+              const e = item._raw;
+              return (
+                <div
+                  key={`exp-${e.id}`}
+                  className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm flex flex-col sm:flex-row sm:items-center gap-3"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-coco-900 truncate">{e.description}</span>
+                      <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">
+                        Despesa
+                      </span>
+                      {e.is_nf && (
+                        <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">
+                          NF
+                        </span>
+                      )}
+                      {e.category && (
+                        <span className="text-xs bg-coco-100 text-coco-700 px-2 py-0.5 rounded-full">
+                          {e.category}
+                        </span>
+                      )}
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${s.cls}`}>
+                        {s.text}
+                      </span>
+                    </div>
+                    <div className="flex gap-3 mt-0.5 flex-wrap">
+                      {e.doc_number && (
+                        <span className="text-xs text-gray-400">Doc: {e.doc_number}</span>
+                      )}
+                      {e.payee && (
+                        <span className="text-xs text-gray-400">Favorecido: {e.payee}</span>
+                      )}
+                      {e.notes && (
+                        <span className="text-xs text-gray-400 truncate">{e.notes}</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <div className="text-right">
+                      <div className="font-bold text-coco-800">{brl(amount)}</div>
+                      {due && (
+                        <div className="text-xs text-gray-400">
+                          Vence {new Date(due + "T12:00:00").toLocaleDateString("pt-BR")}
+                        </div>
+                      )}
+                    </div>
+                    {isPending && (
+                      <>
+                        <button
+                          onClick={() => markExpensePaid(e)}
+                          className="btn-primary text-xs px-3 py-1"
+                        >
+                          ✓ Pagar
+                        </button>
+                        <button
+                          onClick={() => deleteExpense(e.id)}
+                          className="text-gray-400 hover:text-red-600 text-xs"
+                          title="Apagar despesa"
+                        >
+                          🗑
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            }
+
+            const p = item._raw;
             return (
               <div
-                key={p.id}
+                key={`pay-${p.id}`}
                 className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm flex flex-col sm:flex-row sm:items-center gap-3"
               >
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-semibold text-coco-900 truncate">{p.supplier_name}</span>
+                    <span className="font-semibold text-coco-900 truncate">
+                      {p.supplier_name || p.description}
+                    </span>
                     {p.category && (
                       <span className="text-xs bg-coco-100 text-coco-700 px-2 py-0.5 rounded-full">
                         {p.category}
@@ -321,7 +451,9 @@ export default function PagarPage() {
                       {s.text}
                     </span>
                   </div>
-                  <div className="text-sm text-gray-600 truncate mt-0.5">{p.description}</div>
+                  {p.supplier_name && (
+                    <div className="text-sm text-gray-600 truncate mt-0.5">{p.description}</div>
+                  )}
                   <div className="flex gap-3 mt-0.5 flex-wrap">
                     {p.expense_date && (
                       <span className="text-xs text-gray-400">
@@ -338,15 +470,17 @@ export default function PagarPage() {
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
                   <div className="text-right">
-                    <div className="font-bold text-coco-800">{brl(Number(p.amount))}</div>
-                    <div className="text-xs text-gray-400">
-                      Vence {new Date(p.due_date + "T12:00:00").toLocaleDateString("pt-BR")}
-                    </div>
+                    <div className="font-bold text-coco-800">{brl(amount)}</div>
+                    {due && (
+                      <div className="text-xs text-gray-400">
+                        Vence {new Date(due + "T12:00:00").toLocaleDateString("pt-BR")}
+                      </div>
+                    )}
                   </div>
-                  {(p.status === "pendente" || p.status === "vencido") && (
+                  {isPending && (
                     <>
                       <button
-                        onClick={() => markPaid(p)}
+                        onClick={() => markPayablePaid(p)}
                         className="btn-primary text-xs px-3 py-1"
                         title="Marcar como paga"
                       >
@@ -359,7 +493,7 @@ export default function PagarPage() {
                         Editar
                       </button>
                       <button
-                        onClick={() => cancel(p.id)}
+                        onClick={() => cancelPayable(p.id)}
                         className="text-gray-400 hover:text-red-600 text-xs"
                       >
                         ✕
@@ -373,7 +507,7 @@ export default function PagarPage() {
         </div>
       )}
 
-      {/* Modal de edição */}
+      {/* Modal de edição de conta a pagar */}
       {editing && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4 max-h-[90vh] overflow-y-auto">
@@ -382,7 +516,7 @@ export default function PagarPage() {
             </h2>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Fornecedor *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Fornecedor</label>
               {suppliers.length > 0 ? (
                 <select
                   className="input-field"
@@ -396,7 +530,7 @@ export default function PagarPage() {
                     });
                   }}
                 >
-                  <option value="">Selecionar fornecedor…</option>
+                  <option value="">— Sem fornecedor —</option>
                   {suppliers.map((s) => (
                     <option key={s.id} value={s.id}>{s.name}</option>
                   ))}
@@ -409,11 +543,13 @@ export default function PagarPage() {
                   placeholder="Ex: Fazenda Boa Vista"
                 />
               )}
-              {suppliers.length === 0 && (
-                <p className="text-xs text-gray-400 mt-1">
-                  Nenhum fornecedor cadastrado.{" "}
-                  <a href="/fornecedores" className="text-coco-600 underline">Cadastrar fornecedor</a>
-                </p>
+              {suppliers.length > 0 && !editing.supplier_id && (
+                <input
+                  className="input-field mt-2"
+                  value={editing.supplier_name ?? ""}
+                  onChange={(e) => setEditing({ ...editing, supplier_name: e.target.value })}
+                  placeholder="Ou digite o nome do fornecedor"
+                />
               )}
             </div>
 

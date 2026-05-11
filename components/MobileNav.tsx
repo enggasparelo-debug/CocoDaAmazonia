@@ -6,7 +6,6 @@ import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { useTenant } from "@/lib/useTenant";
-import { useDespesasAlert } from "@/lib/useDespesasAlert";
 import { usePayablesAlert } from "@/lib/usePayablesAlert";
 
 type Role = "admin" | "operador";
@@ -28,7 +27,6 @@ const items: NavItem[] = [
   { href: "/pagar", label: "Contas a Pagar", icon: "🧾", roles: ["admin"] },
   { href: "/fornecedores", label: "Fornecedores", icon: "🏭", roles: ["admin"] },
   { href: "/caixa", label: "Caixa", icon: "💵", roles: ["admin"] },
-  { href: "/despesas", label: "Despesas", icon: "💸", roles: ["admin"] },
   { href: "/conciliacao", label: "Conciliação Bancária", icon: "🏦", roles: ["admin"] },
   { href: "/estoque", label: "Estoque", icon: "📦", roles: ["admin"] },
   { href: "/financeiro", label: "Financeiro", icon: "💰", roles: ["admin"] },
@@ -47,7 +45,6 @@ export default function MobileNav() {
   const role: Role = (membership?.role ?? "operador") as Role;
   const visible = items.filter((i) => i.roles.includes(role));
   const quickHref = isAdmin ? "/vendas" : "/carga";
-  const despesasAlert = useDespesasAlert();
   const payablesAlert = usePayablesAlert();
 
   async function logout() {
@@ -103,11 +100,6 @@ export default function MobileNav() {
                   >
                     <span className="text-lg">{it.icon}</span>
                     <span className="flex-1">{it.label}</span>
-                    {it.href === "/despesas" && despesasAlert > 0 && (
-                      <span className="bg-red-500 text-white text-xs font-bold rounded-full px-1.5 py-0.5 min-w-[20px] text-center">
-                        {despesasAlert}
-                      </span>
-                    )}
                     {it.href === "/pagar" && payablesAlert > 0 && (
                       <span className="bg-red-500 text-white text-xs font-bold rounded-full px-1.5 py-0.5 min-w-[20px] text-center">
                         {payablesAlert}
