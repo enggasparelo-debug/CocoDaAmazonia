@@ -971,7 +971,7 @@ export default function DashboardClient() {
           icon="💸"
           accent="red"
           value={brl(state.curExpenses)}
-          href="/despesas"
+          href="/pagar"
           sub={sellerLabel ? "(global, sem filtro de vendedor)" : undefined}
         />
         <DashboardKpi
@@ -1252,7 +1252,7 @@ export default function DashboardClient() {
         <Link href="/receber" className="btn-secondary text-center text-base">
           📒 Receber
         </Link>
-        <Link href="/despesas" className="btn-secondary text-center text-base">
+        <Link href="/pagar" className="btn-secondary text-center text-base">
           💸 Despesa
         </Link>
         <Link href="/cargas" className="btn-secondary text-center text-base">
