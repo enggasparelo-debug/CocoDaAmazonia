@@ -266,53 +266,60 @@ export default function PaymentModal({
               </div>
             )}
 
-            {hasCash && (
-              <div className="mb-4 rounded-xl border border-coco-200 bg-coco-50 p-3">
-                <label className="label">Dinheiro recebido (para calcular troco)</label>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  enterKeyHint="done"
-                  value={cashGiven}
-                  onChange={(e) =>
-                    setCashGiven(e.target.value.replace(/[^0-9.,]/g, ""))
-                  }
-                  onFocus={(e) => e.target.select()}
-                  placeholder="Ex.: 100,00"
-                  className="input text-2xl font-semibold"
-                />
-                {cashGivenNum > 0 && (
-                  <div
-                    className={`mt-2 text-lg font-bold ${
-                      change > 0 ? "text-green-700" : "text-coco-700"
-                    }`}
-                  >
-                    {change > 0
-                      ? `Troco: ${brl(change)}`
-                      : cashGivenNum < total
-                      ? `Faltam ${brl(total - cashGivenNum)}`
-                      : "Valor exato — sem troco"}
-                  </div>
-                )}
-              </div>
-            )}
-
-            <details className="mb-4">
-              <summary className="text-sm text-coco-700 cursor-pointer">
-                Ajustar data do pagamento
-              </summary>
-              <div className="mt-2">
-                <input
-                  type="datetime-local"
-                  className="input max-w-xs"
-                  value={paidAt}
-                  onChange={(e) => setPaidAt(e.target.value)}
-                />
-                <p className="text-xs text-coco-600 mt-1">
-                  Padrão: agora. Ajuste se o pagamento foi em outro momento.
-                </p>
-              </div>
-            </details>
+            <div className="flex flex-wrap gap-4 mb-3 text-sm">
+              <details>
+                <summary className="text-coco-700 cursor-pointer select-none">
+                  📐 Calcular troco
+                </summary>
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="text-coco-700 whitespace-nowrap">
+                    Cliente deu R$
+                  </span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    enterKeyHint="done"
+                    value={cashGiven}
+                    onChange={(e) =>
+                      setCashGiven(e.target.value.replace(/[^0-9.,]/g, ""))
+                    }
+                    onFocus={(e) => e.target.select()}
+                    placeholder="0,00"
+                    className="input w-32"
+                  />
+                  {cashGivenNum > 0 && (
+                    <span
+                      className={`font-semibold ${
+                        change > 0
+                          ? "text-green-700"
+                          : cashGivenNum < total
+                          ? "text-amber-700"
+                          : "text-coco-700"
+                      }`}
+                    >
+                      {change > 0
+                        ? `troco ${brl(change)}`
+                        : cashGivenNum < total
+                        ? `faltam ${brl(total - cashGivenNum)}`
+                        : "exato"}
+                    </span>
+                  )}
+                </div>
+              </details>
+              <details>
+                <summary className="text-coco-700 cursor-pointer select-none">
+                  📅 Ajustar data
+                </summary>
+                <div className="mt-2">
+                  <input
+                    type="datetime-local"
+                    className="input max-w-xs"
+                    value={paidAt}
+                    onChange={(e) => setPaidAt(e.target.value)}
+                  />
+                </div>
+              </details>
+            </div>
 
             {remaining > 0 && (
               <div
