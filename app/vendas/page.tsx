@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { errorMessage } from "@/lib/ui";
-import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { brl, fmtBrNumber, parseBrNumber } from "@/lib/format";
 import { nowLocalIso } from "@/lib/datetime";
@@ -22,7 +21,7 @@ import SearchableSelect from "@/components/SearchableSelect";
 export default function VendasPage() {
   const supabase = createClient();
   const toast = useToast();
-  const { seller: mySeller, isAdmin } = useTenant();
+  const { seller: mySeller } = useTenant();
   const online = useOnline();
   const [settings, setSettings] = useState<ProductSettings | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -269,11 +268,6 @@ export default function VendasPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {isAdmin && (
-            <Link href="/vendas/importar" className="btn-secondary">
-              📥 Importar Excel
-            </Link>
-          )}
           <div className="text-xs text-coco-600 hidden sm:block">
             Atalhos: F2 fiado · Ctrl+Enter finalizar
           </div>
