@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { errorMessage } from "@/lib/ui";
-import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { brl, fmtBrNumber, parseBrNumber } from "@/lib/format";
 import { nowLocalIso } from "@/lib/datetime";
@@ -24,7 +23,7 @@ const QTY_SHORTCUTS = [5, 10, 20, 50];
 export default function VendasPage() {
   const supabase = createClient();
   const toast = useToast();
-  const { seller: mySeller, isAdmin } = useTenant();
+  const { seller: mySeller } = useTenant();
   const online = useOnline();
   const [settings, setSettings] = useState<ProductSettings | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -299,14 +298,6 @@ export default function VendasPage() {
           >
             ↺ Limpar
           </button>
-          {isAdmin && (
-            <Link
-              href="/vendas/importar"
-              className="btn-secondary text-sm hidden md:inline-flex"
-            >
-              📥 Importar
-            </Link>
-          )}
           <div className="text-xs text-coco-600 hidden lg:block">
             F2 fiado · Ctrl+Enter finalizar
           </div>

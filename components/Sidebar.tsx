@@ -33,6 +33,7 @@ const items: NavItem[] = [
   { href: "/operadores", label: "Operadores", icon: "🧑‍💼", roles: ["admin"] },
   { href: "/relatorios", label: "Relatórios", icon: "📈", roles: ["admin"] },
   { href: "/exportar", label: "Exportar Contador", icon: "📤", roles: ["admin"] },
+  { href: "/vendas/importar", label: "Importar Excel", icon: "📥", roles: ["admin"] },
   { href: "/configuracoes", label: "Configurações", icon: "⚙️", roles: ["admin"] },
   { href: "/auditoria", label: "Auditoria", icon: "🔍", roles: ["admin"] },
 ];
@@ -59,6 +60,11 @@ export default function Sidebar() {
   const role: Role = (membership?.role ?? "operador") as Role;
   const visible = items.filter((i) => i.roles.includes(role));
   const payablesAlert = usePayablesAlert();
+  const activeHref = visible
+    .filter((i) =>
+      i.href === "/" ? path === "/" : path === i.href || path.startsWith(i.href + "/")
+    )
+    .sort((a, b) => b.href.length - a.href.length)[0]?.href;
 
   return (
     <aside className="w-60 bg-coco-800 text-coco-50 hidden md:flex flex-col py-6 px-4 sticky top-0 h-screen">
@@ -70,8 +76,7 @@ export default function Sidebar() {
       </div>
       <nav className="flex-1 space-y-1 overflow-y-auto">
         {visible.map((it) => {
-          const active =
-            it.href === "/" ? path === "/" : path.startsWith(it.href);
+          const active = it.href === activeHref;
           return (
             <Link
               key={it.href}
