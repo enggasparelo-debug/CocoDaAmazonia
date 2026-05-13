@@ -18,7 +18,15 @@ import { useTenant } from "@/lib/useTenant";
 import { useOnline } from "@/lib/useOnline";
 import SearchableSelect from "@/components/SearchableSelect";
 
-const QTY_SHORTCUTS = [5, 10, 20, 50];
+const QTY_SHORTCUTS = [10, 50, 100, 500];
+
+type LastSale = {
+  quantity: number;
+  unit_price: number;
+  discount: number;
+  notes: string | null;
+  created_at: string;
+};
 
 export default function VendasPage() {
   const supabase = createClient();
@@ -46,13 +54,9 @@ export default function VendasPage() {
     open_balance: number;
     credit_limit: number | null;
   } | null>(null);
-  const [lastSale, setLastSale] = useState<{
-    quantity: number;
-    unit_price: number;
-    discount: number;
-    notes: string | null;
-    created_at: string;
-  } | null>(null);
+  const [lastSales, setLastSales] = useState<LastSale[]>([]);
+  // Cliente: aberto por padrão; colapsa sozinho quando seleciona; toggle livre depois.
+  const [customerOpen, setCustomerOpen] = useState(true);
 
   const qty = useMemo(() => {
     const n = parseInt(quantity || "0", 10);
@@ -122,9 +126,11 @@ export default function VendasPage() {
   useEffect(() => {
     if (!customerId) {
       setCustomerBalance(null);
-      setLastSale(null);
+      setLastSales([]);
+      setCustomerOpen(true);
       return;
     }
+    setCustomerOpen(false);
     supabase
       .from("customer_balances")
       .select("open_balance, credit_limit")
@@ -142,32 +148,24 @@ export default function VendasPage() {
       .eq("customer_id", customerId)
       .neq("status", "cancelada")
       .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle()
+      .limit(3)
       .then(({ data }) => {
-        setLastSale(
-          (data as {
-            quantity: number;
-            unit_price: number;
-            discount: number;
-            notes: string | null;
-            created_at: string;
-          } | null) ?? null
-        );
+        setLastSales((data as LastSale[]) ?? []);
       });
   }, [customerId, supabase]);
 
   function repetirUltimaVenda() {
-    if (!lastSale) return;
-    setQuantity(String(lastSale.quantity));
-    setUnitPriceStr(fmtBrNumber(Number(lastSale.unit_price)));
-    setDiscountStr(fmtBrNumber(Number(lastSale.discount)));
-    const cleanedNotes = (lastSale.notes ?? "")
+    const last = lastSales[0];
+    if (!last) return;
+    setQuantity(String(last.quantity));
+    setUnitPriceStr(fmtBrNumber(Number(last.unit_price)));
+    setDiscountStr(fmtBrNumber(Number(last.discount)));
+    const cleanedNotes = (last.notes ?? "")
       .replace(/\s*·?\s*fiado\s*$/i, "")
       .trim();
     setNotes(cleanedNotes);
     setSaleDate(nowLocalIso());
-    toast.info(`Carregado da última venda (${brl(Number(lastSale.unit_price) * lastSale.quantity - Number(lastSale.discount))}).`);
+    toast.info(`Carregado da última venda (${brl(Number(last.unit_price) * last.quantity - Number(last.discount))}).`);
   }
 
   function buildPayload() {
@@ -308,7 +306,101 @@ export default function VendasPage() {
 
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="card lg:col-span-2 space-y-4">
-          {/* Stepper de quantidade — o protagonista da Venda Rápida */}
+          {/* 1) Cliente — primeira escolha. Colapsa sozinho ao selecionar pra liberar espaço. */}
+          <details
+            className="rounded-xl border border-coco-100 bg-coco-50/40 px-3 group"
+            open={customerOpen}
+            onToggle={(e) => setCustomerOpen(e.currentTarget.open)}
+          >
+            <summary className="cursor-pointer select-none text-coco-700 py-3 flex items-center justify-between list-none">
+              <span>
+                👤 Cliente{" "}
+                {selectedCustomer ? (
+                  <strong className="text-coco-900">— {selectedCustomer.name}</strong>
+                ) : (
+                  <span className="text-coco-500">(Consumidor)</span>
+                )}
+              </span>
+              <span className="text-coco-500 group-open:rotate-180 transition" aria-hidden>
+                ▾
+              </span>
+            </summary>
+            <div className="pb-3 pt-1">
+              <SearchableSelect
+                value={customerId}
+                onChange={setCustomerId}
+                items={customers.map((c) => ({
+                  id: c.id,
+                  label: c.name,
+                  sublabel: c.phone ?? undefined,
+                }))}
+                placeholder="— Consumidor —"
+              />
+            </div>
+          </details>
+
+          {customerId && customerBalance && (
+            <div className="flex items-center justify-between text-sm rounded-xl border border-coco-200 px-3 py-2 bg-white">
+              <span>
+                Saldo em aberto:{" "}
+                <strong>{brl(Number(customerBalance.open_balance))}</strong>
+                {customerBalance.credit_limit != null && (
+                  <>
+                    {" "}· limite{" "}
+                    <strong>
+                      {brl(Number(customerBalance.credit_limit))}
+                    </strong>
+                  </>
+                )}
+              </span>
+              {customerBalance.credit_limit != null &&
+                Number(customerBalance.open_balance) + total >
+                  Number(customerBalance.credit_limit) && (
+                  <span className="text-amber-700 font-semibold">
+                    ⚠ excede limite
+                  </span>
+                )}
+            </div>
+          )}
+
+          {/* Histórico — referência rápida do preço/qtd que costuma vender pra esse cliente. */}
+          {customerId && lastSales.length > 0 && (
+            <div className="rounded-xl border border-coco-100 bg-white px-3 py-2">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs uppercase tracking-wider text-coco-600 font-semibold">
+                  Últimas vendas
+                </span>
+                <button
+                  type="button"
+                  onClick={repetirUltimaVenda}
+                  className="text-xs text-coco-700 underline"
+                  title="Preenche o formulário com os valores da última venda deste cliente"
+                >
+                  ↩️ Repetir última
+                </button>
+              </div>
+              <ul className="text-sm divide-y divide-coco-100">
+                {lastSales.map((ls, i) => (
+                  <li key={i} className="py-1 flex items-center justify-between gap-2">
+                    <span className="text-coco-800">
+                      <strong>{ls.quantity}</strong> ×{" "}
+                      <strong>{brl(Number(ls.unit_price))}</strong>
+                      {Number(ls.discount) > 0 && (
+                        <span className="text-coco-600">
+                          {" "}· desc. {brl(Number(ls.discount))}
+                        </span>
+                      )}
+                    </span>
+                    <span className="text-xs text-coco-600 whitespace-nowrap">
+                      {new Date(ls.created_at).toLocaleDateString("pt-BR")}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* 2) Quantidade — stepper + atalhos que somam ao valor atual. */}
           <div>
             <label className="label">Quantidade</label>
             <div className="flex items-stretch gap-2">
@@ -332,7 +424,6 @@ export default function VendasPage() {
                 }
                 onFocus={selectOnFocus}
                 placeholder="0"
-                autoFocus
                 className="input text-4xl text-center font-bold flex-1 min-h-[64px]"
               />
               <button
@@ -349,16 +440,40 @@ export default function VendasPage() {
                 <button
                   key={n}
                   type="button"
-                  onClick={() => setQuantity(String(n))}
+                  onClick={() => stepQty(n)}
+                  aria-label={`Adicionar ${n} à quantidade`}
                   className="rounded-full border border-coco-200 px-3 py-1 text-sm text-coco-700 hover:bg-coco-50 active:scale-[.97] transition"
                 >
-                  {n}
+                  +{n}
                 </button>
               ))}
             </div>
           </div>
 
-          {/* Vendedor — sempre visível, obrigatório */}
+          {/* 3) Preço unitário — sempre visível pra evitar engano. */}
+          <div>
+            <label className="label">
+              Valor unitário (R$)
+              {priceChanged && (
+                <span className="ml-2 text-xs font-semibold text-amber-700">
+                  (alterado)
+                </span>
+              )}
+            </label>
+            <input
+              type="text"
+              inputMode="decimal"
+              enterKeyHint="next"
+              value={unitPriceStr}
+              onChange={(e) =>
+                setUnitPriceStr(e.target.value.replace(/[^0-9.,]/g, ""))
+              }
+              onFocus={selectOnFocus}
+              className="input text-xl font-semibold"
+            />
+          </div>
+
+          {/* 4) Vendedor — sempre visível, obrigatório. */}
           <div>
             <SearchableSelect
               label="Vendedor"
@@ -376,143 +491,16 @@ export default function VendasPage() {
             )}
           </div>
 
-          {/* Disclosures pra reduzir poluição visual no caso comum */}
+          {/* 5) Extras — desconto, data, observação. */}
           <details className="rounded-xl border border-coco-100 bg-coco-50/40 px-3 group">
             <summary className="cursor-pointer select-none text-coco-700 py-3 flex items-center justify-between list-none">
               <span>
-                💰 Preço e desconto
-                {priceChanged && (
-                  <span className="ml-2 text-xs font-semibold text-amber-700">
-                    (preço alterado)
-                  </span>
-                )}
+                ⚙️ Desconto, data e observação
                 {discount > 0 && (
                   <span className="ml-2 text-xs font-semibold text-amber-700">
-                    (desconto {brl(discount)})
+                    · desconto {brl(discount)}
                   </span>
                 )}
-              </span>
-              <span className="text-coco-500 group-open:rotate-180 transition" aria-hidden>
-                ▾
-              </span>
-            </summary>
-            <div className="grid sm:grid-cols-2 gap-3 pb-3 pt-1">
-              <div>
-                <label className="label">Valor unitário (R$)</label>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  enterKeyHint="next"
-                  value={unitPriceStr}
-                  onChange={(e) =>
-                    setUnitPriceStr(e.target.value.replace(/[^0-9.,]/g, ""))
-                  }
-                  onFocus={selectOnFocus}
-                  className="input text-xl font-semibold"
-                />
-              </div>
-              <div>
-                <label className="label">Desconto (R$)</label>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  enterKeyHint="done"
-                  value={discountStr}
-                  onChange={(e) =>
-                    setDiscountStr(e.target.value.replace(/[^0-9.,]/g, ""))
-                  }
-                  onFocus={selectOnFocus}
-                  className="input text-xl font-semibold"
-                />
-              </div>
-            </div>
-          </details>
-
-          <details
-            className="rounded-xl border border-coco-100 bg-coco-50/40 px-3 group"
-            open={!!customerId}
-          >
-            <summary className="cursor-pointer select-none text-coco-700 py-3 flex items-center justify-between list-none">
-              <span>
-                👤 Cliente{" "}
-                {selectedCustomer ? (
-                  <strong className="text-coco-900">— {selectedCustomer.name}</strong>
-                ) : (
-                  <span className="text-coco-500">(Consumidor)</span>
-                )}
-              </span>
-              <span className="text-coco-500 group-open:rotate-180 transition" aria-hidden>
-                ▾
-              </span>
-            </summary>
-            <div className="pb-3 pt-1 space-y-2">
-              <SearchableSelect
-                value={customerId}
-                onChange={setCustomerId}
-                items={customers.map((c) => ({
-                  id: c.id,
-                  label: c.name,
-                  sublabel: c.phone ?? undefined,
-                }))}
-                placeholder="— Consumidor —"
-              />
-              {customerBalance && (
-                <div className="flex items-center justify-between text-sm rounded-xl border border-coco-200 px-3 py-2 bg-white">
-                  <span>
-                    Saldo em aberto:{" "}
-                    <strong>{brl(Number(customerBalance.open_balance))}</strong>
-                    {customerBalance.credit_limit != null && (
-                      <>
-                        {" "}· limite{" "}
-                        <strong>
-                          {brl(Number(customerBalance.credit_limit))}
-                        </strong>
-                      </>
-                    )}
-                  </span>
-                  {customerBalance.credit_limit != null &&
-                    Number(customerBalance.open_balance) + total >
-                      Number(customerBalance.credit_limit) && (
-                      <span className="text-amber-700 font-semibold">
-                        ⚠ excede limite
-                      </span>
-                    )}
-                </div>
-              )}
-            </div>
-          </details>
-
-          {lastSale && customerId && (
-            <button
-              type="button"
-              onClick={repetirUltimaVenda}
-              className="w-full rounded-xl border border-coco-300 bg-coco-50 hover:bg-coco-100 px-3 py-2 text-sm text-left flex items-center justify-between gap-3 transition"
-              title="Preenche o formulário com os valores da última venda deste cliente"
-            >
-              <span className="flex items-center gap-2">
-                <span aria-hidden>↩️</span>
-                <span>
-                  <strong>Repetir última venda</strong>
-                  <span className="text-coco-600">
-                    {" — "}
-                    {lastSale.quantity} ×{" "}
-                    {brl(Number(lastSale.unit_price))}
-                    {Number(lastSale.discount) > 0 && (
-                      <> · desc. {brl(Number(lastSale.discount))}</>
-                    )}{" "}
-                    ·{" "}
-                    {new Date(lastSale.created_at).toLocaleDateString("pt-BR")}
-                  </span>
-                </span>
-              </span>
-              <span className="text-coco-700 text-xs">Usar →</span>
-            </button>
-          )}
-
-          <details className="rounded-xl border border-coco-100 bg-coco-50/40 px-3 group">
-            <summary className="cursor-pointer select-none text-coco-700 py-3 flex items-center justify-between list-none">
-              <span>
-                📅 Data e observação
                 {notes && (
                   <span className="ml-2 text-xs text-coco-600">
                     · &ldquo;{notes.length > 20 ? notes.slice(0, 20) + "…" : notes}&rdquo;
@@ -525,6 +513,20 @@ export default function VendasPage() {
             </summary>
             <div className="grid sm:grid-cols-2 gap-3 pb-3 pt-1">
               <div>
+                <label className="label">Desconto (R$)</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  enterKeyHint="next"
+                  value={discountStr}
+                  onChange={(e) =>
+                    setDiscountStr(e.target.value.replace(/[^0-9.,]/g, ""))
+                  }
+                  onFocus={selectOnFocus}
+                  className="input text-xl font-semibold"
+                />
+              </div>
+              <div>
                 <label className="label">Data da venda</label>
                 <input
                   type="datetime-local"
@@ -536,7 +538,7 @@ export default function VendasPage() {
                   Padrão: agora. Pode registrar uma venda passada.
                 </p>
               </div>
-              <div>
+              <div className="sm:col-span-2">
                 <label className="label">Observação</label>
                 <input
                   value={notes}

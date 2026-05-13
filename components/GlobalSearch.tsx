@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { brl, fmtDate } from "@/lib/format";
 import { useTenant } from "@/lib/useTenant";
@@ -28,7 +28,10 @@ const EMPTY: Results = { sales: [], customers: [], cargas: [] };
 export default function GlobalSearch() {
   const supabase = createClient();
   const router = useRouter();
+  const pathname = usePathname();
   const { isAdmin, loading: tLoading } = useTenant();
+  // Em Venda Rápida o FAB de busca atrapalha o fluxo do vendedor — escondemos lá.
+  const hideFab = pathname === "/vendas";
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Results>(EMPTY);
@@ -121,14 +124,16 @@ export default function GlobalSearch() {
 
   return (
     <>
-      <button
-        onClick={() => setOpen(true)}
-        className="fixed bottom-4 right-4 z-30 bg-coco-600 text-white rounded-full shadow-lg w-12 h-12 flex items-center justify-center hover:bg-coco-700 sm:hidden"
-        aria-label="Abrir busca global"
-        title="Buscar (Ctrl+K)"
-      >
-        🔎
-      </button>
+      {!hideFab && (
+        <button
+          onClick={() => setOpen(true)}
+          className="fixed bottom-4 right-4 z-30 bg-coco-600 text-white rounded-full shadow-lg w-12 h-12 flex items-center justify-center hover:bg-coco-700 sm:hidden"
+          aria-label="Abrir busca global"
+          title="Buscar (Ctrl+K)"
+        >
+          🔎
+        </button>
+      )}
       {open && (
         <div
           className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 pt-20"
