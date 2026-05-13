@@ -45,6 +45,13 @@ export default function VendasPage() {
     open_balance: number;
     credit_limit: number | null;
   } | null>(null);
+  const [lastSale, setLastSale] = useState<{
+    quantity: number;
+    unit_price: number;
+    discount: number;
+    notes: string | null;
+    created_at: string;
+  } | null>(null);
 
   const qty = useMemo(() => {
     const n = parseInt(quantity || "0", 10);
@@ -104,6 +111,7 @@ export default function VendasPage() {
   useEffect(() => {
     if (!customerId) {
       setCustomerBalance(null);
+      setLastSale(null);
       return;
     }
     supabase
@@ -117,7 +125,39 @@ export default function VendasPage() {
             data as { open_balance: number; credit_limit: number | null }
           );
       });
+    supabase
+      .from("sales")
+      .select("quantity, unit_price, discount, notes, created_at")
+      .eq("customer_id", customerId)
+      .neq("status", "cancelada")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        setLastSale(
+          (data as {
+            quantity: number;
+            unit_price: number;
+            discount: number;
+            notes: string | null;
+            created_at: string;
+          } | null) ?? null
+        );
+      });
   }, [customerId, supabase]);
+
+  function repetirUltimaVenda() {
+    if (!lastSale) return;
+    setQuantity(String(lastSale.quantity));
+    setUnitPriceStr(fmtBrNumber(Number(lastSale.unit_price)));
+    setDiscountStr(fmtBrNumber(Number(lastSale.discount)));
+    const cleanedNotes = (lastSale.notes ?? "")
+      .replace(/\s*·?\s*fiado\s*$/i, "")
+      .trim();
+    setNotes(cleanedNotes);
+    setSaleDate(nowLocalIso());
+    toast.info(`Carregado da última venda (${brl(Number(lastSale.unit_price) * lastSale.quantity - Number(lastSale.discount))}).`);
+  }
 
   function buildPayload() {
     return {
@@ -382,6 +422,33 @@ export default function VendasPage() {
               placeholder="Ex.: entrega na praia, troco para R$ 100…"
             />
           </div>
+
+          {lastSale && customerId && (
+            <button
+              type="button"
+              onClick={repetirUltimaVenda}
+              className="w-full rounded-xl border border-coco-300 bg-coco-50 hover:bg-coco-100 px-3 py-2 text-sm text-left flex items-center justify-between gap-3 transition"
+              title="Preenche o formulário com os valores da última venda deste cliente"
+            >
+              <span className="flex items-center gap-2">
+                <span aria-hidden>↩️</span>
+                <span>
+                  <strong>Repetir última venda</strong>
+                  <span className="text-coco-600">
+                    {" — "}
+                    {lastSale.quantity} ×{" "}
+                    {brl(Number(lastSale.unit_price))}
+                    {Number(lastSale.discount) > 0 && (
+                      <> · desc. {brl(Number(lastSale.discount))}</>
+                    )}{" "}
+                    ·{" "}
+                    {new Date(lastSale.created_at).toLocaleDateString("pt-BR")}
+                  </span>
+                </span>
+              </span>
+              <span className="text-coco-700 text-xs">Usar →</span>
+            </button>
+          )}
 
           {customerBalance && (
             <div className="flex items-center justify-between text-sm rounded-xl border border-coco-200 px-3 py-2 bg-coco-50">
