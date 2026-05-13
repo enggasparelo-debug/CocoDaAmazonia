@@ -11,6 +11,17 @@ type Entry = {
   amount: number;
 };
 
+function methodIcon(name: string): string {
+  const n = name.toLowerCase();
+  if (n.includes("dinheiro") || n.includes("cash")) return "💵";
+  if (n.includes("pix")) return "📱";
+  if (n.includes("débito") || n.includes("debito")) return "💳";
+  if (n.includes("crédito") || n.includes("credito") || n.includes("cartão") || n.includes("cartao")) return "💳";
+  if (n.includes("transfer")) return "🏦";
+  if (n.includes("boleto")) return "🧾";
+  return "💰";
+}
+
 export default function PaymentModal({
   saleId,
   total,
@@ -34,6 +45,8 @@ export default function PaymentModal({
     d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
     return d.toISOString().slice(0, 16);
   });
+  // Calculadora de troco: dinheiro entregue pelo cliente
+  const [cashGiven, setCashGiven] = useState<string>("");
 
   const cashMethods = useMemo(
     () => methods.filter((m) => !m.is_credit),
@@ -45,6 +58,18 @@ export default function PaymentModal({
     [entries]
   );
   const remaining = Math.max(0, +(total - paid).toFixed(2));
+
+  // Troco: aplica-se quando há método "dinheiro" lançado.
+  const cashGivenNum = parseFloat(cashGiven.replace(",", ".")) || 0;
+  const isCashEntry = (mid: string) => {
+    const m = cashMethods.find((x) => x.id === mid);
+    return !!m && /(dinheiro|cash)/i.test(m.name);
+  };
+  const hasCash = entries.some((e) => isCashEntry(e.payment_method_id));
+  const change =
+    hasCash && cashGivenNum > 0
+      ? Math.max(0, +(cashGivenNum - total).toFixed(2))
+      : 0;
 
   function quickPay(methodId: string) {
     setEntries((arr) => [
@@ -104,17 +129,24 @@ export default function PaymentModal({
     }
   }
 
+  const shareReceiptUrl =
+    typeof window !== "undefined"
+      ? `${window.location.origin}/recibo/${saleId}`
+      : `/recibo/${saleId}`;
+  const whatsappHref = `https://wa.me/?text=${encodeURIComponent(
+    `Recibo de coco verde — ${brl(total)}\n${shareReceiptUrl}`
+  )}`;
+
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+      className="modal-backdrop"
       onClick={(e) => {
-        // Tap fora do card fecha o modal (mas não enquanto salva).
         if (e.target === e.currentTarget && !saving) onClose();
       }}
       role="dialog"
       aria-modal="true"
     >
-      <div className="bg-white rounded-2xl shadow-xl max-w-2xl w-full p-6">
+      <div className="modal-card modal-card--xl modal-pad">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-2xl font-bold text-coco-900">
             {done ? "Venda finalizada ✅" : "Recebimento"}
@@ -130,23 +162,23 @@ export default function PaymentModal({
 
         {!done ? (
           <>
-            <div className="grid grid-cols-3 gap-3 mb-4">
+            <div className="grid grid-cols-3 gap-2 sm:gap-3 mb-4">
               <div className="card !p-3">
                 <div className="text-xs text-coco-700">Total</div>
-                <div className="text-xl font-bold">{brl(total)}</div>
+                <div className="text-lg sm:text-xl font-bold">{brl(total)}</div>
               </div>
               <div className="card !p-3">
                 <div className="text-xs text-coco-700">Recebido</div>
-                <div className="text-xl font-bold text-green-700">
+                <div className="text-lg sm:text-xl font-bold text-green-700">
                   {brl(paid)}
                 </div>
               </div>
               <div className="card !p-3">
                 <div className="text-xs text-coco-700">
-                  {remaining > 0 ? "Fiado (a receber)" : "Restante"}
+                  {remaining > 0 ? "Fiado" : "Restante"}
                 </div>
                 <div
-                  className={`text-xl font-bold ${
+                  className={`text-lg sm:text-xl font-bold ${
                     remaining > 0 ? "text-amber-700" : "text-green-700"
                   }`}
                 >
@@ -156,97 +188,131 @@ export default function PaymentModal({
             </div>
 
             <div className="mb-4">
-              <label className="label">Data do pagamento</label>
-              <input
-                type="datetime-local"
-                className="input max-w-xs"
-                value={paidAt}
-                onChange={(e) => setPaidAt(e.target.value)}
-              />
-              <p className="text-xs text-coco-600 mt-1">
-                Padrão: agora. Pode ajustar se o pagamento foi em outro
-                momento.
-              </p>
-            </div>
-
-            <div className="mb-4">
               <div className="text-sm font-semibold text-coco-800 mb-2">
-                Formas de pagamento à vista
+                Receber com…
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {cashMethods.map((m) => (
                   <button
                     key={m.id}
                     onClick={() => quickPay(m.id)}
-                    className="btn-secondary"
+                    className="chip-pay"
+                    aria-label={`Receber ${brl(remaining || total)} em ${m.name}`}
                   >
-                    💳 {m.name}
+                    <span className="text-2xl leading-none">{methodIcon(m.name)}</span>
+                    <span className="text-sm leading-tight text-center">{m.name}</span>
                   </button>
                 ))}
               </div>
               <p className="text-xs text-coco-600 mt-2">
-                Toque uma forma para lançar o restante. Você pode adicionar
-                várias (split). O que <strong>não</strong> for lançado fica em
-                aberto (fiado) na conta do cliente.
+                Toque para lançar o valor restante. Você pode combinar várias formas.
               </p>
             </div>
 
             {entries.length > 0 && (
-              <table className="table mb-4">
-                <thead>
-                  <tr>
-                    <th>Forma</th>
-                    <th>Valor</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {entries.map((e, i) => (
-                    <tr key={i}>
-                      <td>
-                        <select
-                          value={e.payment_method_id}
-                          onChange={(ev) =>
-                            updateEntry(i, {
-                              payment_method_id: ev.target.value,
-                            })
-                          }
-                          className="input"
-                        >
-                          {cashMethods.map((m) => (
-                            <option key={m.id} value={m.id}>
-                              {m.name}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="w-40">
-                        <input
-                          type="number"
-                          step="0.01"
-                          inputMode="decimal"
-                          value={e.amount}
-                          onChange={(ev) =>
-                            updateEntry(i, {
-                              amount: parseFloat(ev.target.value || "0"),
-                            })
-                          }
-                          className="input text-right"
-                        />
-                      </td>
-                      <td className="w-24 text-right">
-                        <button
-                          onClick={() => removeEntry(i)}
-                          className="btn-ghost text-red-600"
-                        >
-                          remover
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="space-y-2 mb-4">
+                {entries.map((e, i) => {
+                  const method = cashMethods.find(
+                    (m) => m.id === e.payment_method_id
+                  );
+                  return (
+                    <div
+                      key={i}
+                      className="flex items-center gap-2 border border-coco-100 rounded-xl p-2"
+                    >
+                      <span className="text-2xl" aria-hidden>
+                        {methodIcon(method?.name ?? "")}
+                      </span>
+                      <select
+                        value={e.payment_method_id}
+                        onChange={(ev) =>
+                          updateEntry(i, {
+                            payment_method_id: ev.target.value,
+                          })
+                        }
+                        className="input flex-1 min-w-0"
+                      >
+                        {cashMethods.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.name}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={e.amount || ""}
+                        onChange={(ev) =>
+                          updateEntry(i, {
+                            amount: parseFloat(
+                              ev.target.value.replace(",", ".") || "0"
+                            ),
+                          })
+                        }
+                        onFocus={(ev) => ev.target.select()}
+                        className="input text-right font-semibold w-28"
+                        aria-label="Valor"
+                      />
+                      <button
+                        onClick={() => removeEntry(i)}
+                        className="btn-ghost text-red-600 px-2"
+                        aria-label="Remover pagamento"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
             )}
+
+            {hasCash && (
+              <div className="mb-4 rounded-xl border border-coco-200 bg-coco-50 p-3">
+                <label className="label">Dinheiro recebido (para calcular troco)</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  enterKeyHint="done"
+                  value={cashGiven}
+                  onChange={(e) =>
+                    setCashGiven(e.target.value.replace(/[^0-9.,]/g, ""))
+                  }
+                  onFocus={(e) => e.target.select()}
+                  placeholder="Ex.: 100,00"
+                  className="input text-2xl font-semibold"
+                />
+                {cashGivenNum > 0 && (
+                  <div
+                    className={`mt-2 text-lg font-bold ${
+                      change > 0 ? "text-green-700" : "text-coco-700"
+                    }`}
+                  >
+                    {change > 0
+                      ? `Troco: ${brl(change)}`
+                      : cashGivenNum < total
+                      ? `Faltam ${brl(total - cashGivenNum)}`
+                      : "Valor exato — sem troco"}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <details className="mb-4">
+              <summary className="text-sm text-coco-700 cursor-pointer">
+                Ajustar data do pagamento
+              </summary>
+              <div className="mt-2">
+                <input
+                  type="datetime-local"
+                  className="input max-w-xs"
+                  value={paidAt}
+                  onChange={(e) => setPaidAt(e.target.value)}
+                />
+                <p className="text-xs text-coco-600 mt-1">
+                  Padrão: agora. Ajuste se o pagamento foi em outro momento.
+                </p>
+              </div>
+            </details>
 
             {remaining > 0 && (
               <div
@@ -276,14 +342,14 @@ export default function PaymentModal({
               </div>
             )}
 
-            <div className="flex justify-end gap-2">
-              <button onClick={onClose} className="btn-ghost">
+            <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sticky bottom-0 bg-white pt-2">
+              <button onClick={onClose} className="btn-ghost btn-touch">
                 Cancelar
               </button>
               <button
                 onClick={confirm}
                 disabled={saving || (remaining > 0 && !hasCustomer)}
-                className="btn-primary"
+                className="btn-primary btn-touch"
               >
                 {saving
                   ? "Salvando…"
@@ -296,28 +362,44 @@ export default function PaymentModal({
         ) : (
           <div className="text-center py-6">
             <div className="text-5xl mb-3">🥥✅</div>
-            <p className="text-coco-700 mb-6">
-              Venda salva. Total: {brl(total)} · Recebido: {brl(paid)}
+            <p className="text-coco-700 mb-2">Venda salva.</p>
+            <p className="text-coco-700 mb-4 text-sm">
+              Total: {brl(total)} · Recebido: {brl(paid)}
               {remaining > 0 && (
                 <>
-                  {" "}
-                  ·{" "}
+                  {" "}·{" "}
                   <strong className="text-amber-700">
                     Fiado: {brl(remaining)}
                   </strong>
                 </>
               )}
+              {change > 0 && (
+                <>
+                  {" "}·{" "}
+                  <strong className="text-green-700">
+                    Troco: {brl(change)}
+                  </strong>
+                </>
+              )}
             </p>
-            <div className="flex justify-center gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 max-w-md mx-auto">
+              <a
+                href={whatsappHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn-secondary btn-touch"
+              >
+                📲 WhatsApp
+              </a>
               <a
                 href={`/recibo/${saleId}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="btn-secondary"
+                className="btn-secondary btn-touch"
               >
-                🧾 Imprimir comprovante
+                🧾 Imprimir
               </a>
-              <button onClick={onClose} className="btn-primary">
+              <button onClick={onClose} className="btn-primary btn-touch">
                 Nova venda
               </button>
             </div>

@@ -51,11 +51,11 @@ export default function CustomerQuickForm({
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
+    <div className="modal-backdrop" role="dialog" aria-modal="true">
+      <div className="modal-card modal-card--md modal-pad">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-bold text-coco-900">Novo cliente</h2>
-          <button onClick={onClose} className="btn-ghost">
+          <button onClick={onClose} className="btn-ghost" aria-label="Fechar">
             Fechar
           </button>
         </div>
@@ -67,6 +67,8 @@ export default function CustomerQuickForm({
               className="input"
               value={name}
               onChange={(e) => setName(e.target.value)}
+              autoComplete="name"
+              enterKeyHint="next"
               autoFocus
             />
           </div>
@@ -77,6 +79,9 @@ export default function CustomerQuickForm({
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               inputMode="tel"
+              autoComplete="tel"
+              enterKeyHint="next"
+              placeholder="(00) 00000-0000"
             />
           </div>
           <div>
@@ -88,6 +93,8 @@ export default function CustomerQuickForm({
               value={document}
               onChange={(e) => setDocument(e.target.value)}
               inputMode="numeric"
+              enterKeyHint="next"
+              placeholder="000.000.000-00"
             />
             {requireDocsForCredit && (
               <p className="text-xs text-coco-600 mt-1">
@@ -104,6 +111,8 @@ export default function CustomerQuickForm({
               className="input"
               value={address}
               onChange={(e) => setAddress(e.target.value)}
+              autoComplete="street-address"
+              enterKeyHint="done"
             />
           </div>
         </div>
@@ -114,11 +123,19 @@ export default function CustomerQuickForm({
           </p>
         )}
 
-        <div className="flex justify-end gap-2 mt-5">
-          <button onClick={onClose} className="btn-ghost" disabled={saving}>
+        <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 mt-5">
+          <button
+            onClick={onClose}
+            className="btn-ghost btn-touch"
+            disabled={saving}
+          >
             Cancelar
           </button>
-          <button onClick={save} className="btn-primary" disabled={saving}>
+          <button
+            onClick={save}
+            className="btn-primary btn-touch"
+            disabled={saving}
+          >
             {saving ? "Salvando…" : "Salvar"}
           </button>
         </div>

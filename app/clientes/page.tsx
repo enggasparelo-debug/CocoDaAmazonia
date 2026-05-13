@@ -61,8 +61,8 @@ export default function ClientesPage() {
   async function load() {
     setLoading(true);
     const [c, b] = await Promise.all([
-      supabase.from("customers").select("*").order("name"),
-      supabase.from("customer_balances").select("*"),
+      supabase.from("customers").select("*").order("name").limit(2000),
+      supabase.from("customer_balances").select("*").limit(2000),
     ]);
     setCustomers((c.data as Customer[]) ?? []);
     const map: Record<string, CustomerBalance> = {};
