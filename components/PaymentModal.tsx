@@ -207,6 +207,21 @@ export default function PaymentModal({
               <p className="text-xs text-coco-600 mt-2">
                 Toque para lançar o valor restante. Você pode combinar várias formas.
               </p>
+              {hasCustomer && entries.length === 0 && (
+                <button
+                  type="button"
+                  onClick={confirm}
+                  disabled={saving}
+                  className="mt-3 w-full rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 px-3 py-2 text-sm flex items-center justify-center gap-2 transition text-amber-900"
+                  title="Não receber nada agora — deixa tudo pendente na conta do cliente"
+                >
+                  <span aria-hidden>📒</span>
+                  <span>
+                    <strong>Deixar pendente (fiado)</strong>
+                    <span className="text-amber-800/80"> — {brl(total)}</span>
+                  </span>
+                </button>
+              )}
             </div>
 
             {entries.length > 0 && (
