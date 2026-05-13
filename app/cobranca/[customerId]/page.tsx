@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { brl, fmtDateOnly } from "@/lib/format";
 import { useTenant } from "@/lib/useTenant";
-import type { Customer, Sale } from "@/lib/types";
+import type { Customer, PaymentMethod, Sale, SalePayment } from "@/lib/types";
 
 export default function CobrancaPage() {
   const supabase = createClient();
@@ -15,6 +15,9 @@ export default function CobrancaPage() {
 
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [openSales, setOpenSales] = useState<Sale[]>([]);
+  const [recentPayments, setRecentPayments] = useState<
+    (SalePayment & { method?: string; sale_code?: number })[]
+  >([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -25,12 +28,52 @@ export default function CobrancaPage() {
           .from("sales")
           .select("*")
           .eq("customer_id", customerId)
-          .neq("status", "paga")
-          .is("canceled_at", null)
-          .order("created_at", { ascending: true }),
+          .order("created_at", { ascending: false })
+          .limit(50),
       ]);
       setCustomer((c.data as Customer) ?? null);
-      setOpenSales((s.data as Sale[]) ?? []);
+      const allSales = (s.data as Sale[]) ?? [];
+      // Vendas em aberto (não pagas e não canceladas) — ordem mais antiga primeiro.
+      setOpenSales(
+        allSales
+          .filter((x) => x.status !== "paga" && !x.canceled_at)
+          .sort(
+            (a, b) =>
+              new Date(a.created_at).getTime() -
+              new Date(b.created_at).getTime()
+          )
+      );
+
+      // Histórico de pagamentos das últimas vendas (max 10).
+      const saleIds = allSales.map((x) => x.id);
+      if (saleIds.length > 0) {
+        const [p, m] = await Promise.all([
+          supabase
+            .from("sale_payments")
+            .select("*")
+            .in("sale_id", saleIds)
+            .order("paid_at", { ascending: false })
+            .limit(10),
+          supabase.from("payment_methods").select("*"),
+        ]);
+        const methodById: Record<string, string> = {};
+        (m.data as PaymentMethod[] | null)?.forEach((x) => {
+          methodById[x.id] = x.name;
+        });
+        const saleCodeById: Record<string, number> = {};
+        allSales.forEach((x) => {
+          saleCodeById[x.id] = x.code;
+        });
+        setRecentPayments(
+          ((p.data as SalePayment[]) ?? []).map((pay) => ({
+            ...pay,
+            method: methodById[pay.payment_method_id],
+            sale_code: saleCodeById[pay.sale_id],
+          }))
+        );
+      } else {
+        setRecentPayments([]);
+      }
       setLoading(false);
     })();
   }, [customerId, supabase]);
@@ -194,6 +237,41 @@ export default function CobrancaPage() {
                 />
               </section>
             </>
+          )}
+
+          {recentPayments.length > 0 && (
+            <section className="mb-4 print:hidden">
+              <h2 className="font-bold text-coco-900 mb-2 text-sm">
+                Últimos pagamentos ({recentPayments.length})
+              </h2>
+              <ul className="text-sm divide-y divide-coco-100 border border-coco-200 rounded-xl">
+                {recentPayments.map((p) => (
+                  <li
+                    key={p.id}
+                    className="flex justify-between items-center px-3 py-2"
+                  >
+                    <span>
+                      <span className="text-coco-700">
+                        {fmtDateOnly(p.paid_at)}
+                      </span>
+                      {p.sale_code && (
+                        <span className="text-coco-500 ml-2">
+                          venda #{p.sale_code}
+                        </span>
+                      )}
+                      {p.method && (
+                        <span className="text-coco-600 ml-2 text-xs">
+                          · {p.method}
+                        </span>
+                      )}
+                    </span>
+                    <strong className="text-green-700">
+                      {brl(Number(p.amount))}
+                    </strong>
+                  </li>
+                ))}
+              </ul>
+            </section>
           )}
 
           <footer className="border-t border-coco-200 pt-3 text-xs text-coco-600 space-y-1">

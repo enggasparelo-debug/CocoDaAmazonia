@@ -11,6 +11,9 @@ import PaymentModal from "@/components/PaymentModal";
 import CustomerQuickForm from "@/components/CustomerQuickForm";
 import { useToast } from "@/components/Toast";
 import { useTenant } from "@/lib/useTenant";
+import { useOnline } from "@/lib/useOnline";
+import { enqueueSale } from "@/lib/offlineQueue";
+import SearchableSelect from "@/components/SearchableSelect";
 
 export default function CargaSaleForm({
   cargaId,
@@ -23,6 +26,7 @@ export default function CargaSaleForm({
   const toast = useToast();
   const router = useRouter();
   const { seller, isAdmin, loading: tLoading } = useTenant();
+  const online = useOnline();
   const [settings, setSettings] = useState<ProductSettings | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
@@ -87,19 +91,29 @@ export default function CargaSaleForm({
     if (unitPrice <= 0) return toast.error("Informe o valor unitário.");
     if (!seller) return toast.error("Vendedor não vinculado ao seu login.");
     setSaving(true);
+    const payload = {
+      customer_id: customerId || null,
+      quantity: qty,
+      unit_price: unitPrice,
+      discount: 0,
+      total,
+      notes: notes || null,
+      carga_id: cargaId,
+      seller_id: seller.id,
+    };
     try {
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        await enqueueSale(payload);
+        toast.warn(
+          `Sem conexão — venda de ${brl(total)} salva e será sincronizada.`
+        );
+        reset();
+        onSaved?.();
+        return;
+      }
       const { data, error } = await supabase
         .from("sales")
-        .insert({
-          customer_id: customerId || null,
-          quantity: qty,
-          unit_price: unitPrice,
-          discount: 0,
-          total,
-          notes: notes || null,
-          carga_id: cargaId,
-          seller_id: seller.id,
-        })
+        .insert(payload)
         .select("*")
         .single();
       if (error) throw error;
@@ -109,7 +123,16 @@ export default function CargaSaleForm({
         hasCustomer: !!data.customer_id,
       });
     } catch (e: unknown) {
-      toast.error(errorMessage(e));
+      try {
+        await enqueueSale(payload);
+        toast.warn(
+          `Falhou online — venda de ${brl(total)} enfileirada.`
+        );
+        reset();
+        onSaved?.();
+      } catch {
+        toast.error(errorMessage(e));
+      }
     } finally {
       setSaving(false);
     }
@@ -138,6 +161,12 @@ export default function CargaSaleForm({
 
   return (
     <div className="space-y-4">
+      {!online && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 text-amber-900 px-4 py-2 text-sm flex items-center gap-2">
+          <span aria-hidden>📡</span>
+          Sem internet — vendas ficam salvas e sincronizam depois.
+        </div>
+      )}
       <div className="card space-y-4">
         {seller && (
           <div className="text-xs text-coco-700">
@@ -198,31 +227,25 @@ export default function CargaSaleForm({
         </div>
 
         <div>
-          <label className="label">Cliente</label>
-          <div className="flex gap-2">
-            <select
-              value={customerId}
-              onChange={(e) => setCustomerId(e.target.value)}
-              className="input flex-1"
-            >
-              <option value="">— Consumidor —</option>
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              className="btn-secondary whitespace-nowrap"
-              onClick={() => {
+          <SearchableSelect
+            label="Cliente"
+            value={customerId}
+            onChange={setCustomerId}
+            items={customers.map((c) => ({
+              id: c.id,
+              label: c.name,
+              sublabel: c.phone ?? undefined,
+            }))}
+            placeholder="— Consumidor —"
+            prepend={{
+              label: "Novo cliente",
+              icon: "＋",
+              onSelect: () => {
                 setRequireDocs(false);
                 setShowCustomerForm(true);
-              }}
-            >
-              + Novo
-            </button>
-          </div>
+              },
+            }}
+          />
           <p className="text-xs text-coco-600 mt-1">
             Para venda fiado é obrigatório selecionar um cliente.
           </p>
@@ -252,7 +275,7 @@ export default function CargaSaleForm({
         <button
           onClick={finalize}
           disabled={saving || qty <= 0 || unitPrice <= 0}
-          className="btn-primary w-full text-lg py-4"
+          className="btn-primary btn-touch w-full"
         >
           {saving ? "Salvando…" : "Finalizar venda →"}
         </button>

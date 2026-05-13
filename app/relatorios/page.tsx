@@ -122,12 +122,14 @@ export default function RelatoriosPage() {
 
   async function loadReport() {
     setLoading(true);
+    const REPORT_CAP = 2000;
     let q = supabase
       .from("sales")
       .select("*")
       .gte("created_at", isoStart(from))
       .lte("created_at", isoEnd(to))
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .limit(REPORT_CAP);
     if (customerId) q = q.eq("customer_id", customerId);
     if (status) q = q.eq("status", status);
     if (sellerId) q = q.eq("seller_id", sellerId);

@@ -79,11 +79,18 @@ export default function OfflineSync() {
       }`}
     >
       {!online ? (
-        <span>📡 sem internet</span>
+        <span>
+          📡 sem internet
+          {pending > 0 && (
+            <span className="ml-1">· {pending} venda(s) salva(s)</span>
+          )}
+        </span>
       ) : (
-        <span>📤 {pending} venda(s) pendente(s)</span>
+        <span>
+          {busy ? "📡 sincronizando…" : `📤 ${pending} venda(s) pendente(s)`}
+        </span>
       )}
-      {pending > 0 && online && (
+      {pending > 0 && online && !busy && (
         <button
           onClick={() => flush(true)}
           disabled={busy}

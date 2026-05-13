@@ -16,11 +16,14 @@ import PaymentModal from "@/components/PaymentModal";
 import { useToast } from "@/components/Toast";
 import { enqueueSale } from "@/lib/offlineQueue";
 import { useTenant } from "@/lib/useTenant";
+import { useOnline } from "@/lib/useOnline";
+import SearchableSelect from "@/components/SearchableSelect";
 
 export default function VendasPage() {
   const supabase = createClient();
   const toast = useToast();
   const { seller: mySeller, isAdmin } = useTenant();
+  const online = useOnline();
   const [settings, setSettings] = useState<ProductSettings | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
@@ -144,10 +147,20 @@ export default function VendasPage() {
     const err = validate();
     if (err) return toast.error(err);
     setSavingSale(true);
+    const payload = buildPayload();
     try {
+      // Sem internet: enfileira como aberta e abre comprovante "vai sincronizar".
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        await enqueueSale(payload);
+        toast.warn(
+          `Sem conexão — venda de ${brl(total)} salva e será sincronizada.`
+        );
+        reset();
+        return;
+      }
       const { data, error } = await supabase
         .from("sales")
-        .insert(buildPayload())
+        .insert(payload)
         .select("*")
         .single();
       if (error) throw error;
@@ -155,7 +168,16 @@ export default function VendasPage() {
       setOpenSaleTotal(Number(data.total));
       setOpenSaleHasCustomer(!!data.customer_id);
     } catch (e: unknown) {
-      toast.error(errorMessage(e));
+      // Fallback: se falhou online, salva offline pra não perder a venda.
+      try {
+        await enqueueSale(payload);
+        toast.warn(
+          `Falhou online — venda de ${brl(total)} enfileirada. Tente novamente.`
+        );
+        reset();
+      } catch {
+        toast.error(errorMessage(e));
+      }
     } finally {
       setSavingSale(false);
     }
@@ -229,6 +251,15 @@ export default function VendasPage() {
 
   return (
     <div className="space-y-6">
+      {!online && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 text-amber-900 px-4 py-3 flex items-center gap-2">
+          <span className="text-xl" aria-hidden>📡</span>
+          <div className="text-sm">
+            <strong>Sem internet.</strong> Vendas que você finalizar agora ficam
+            salvas no celular e sincronizam quando a conexão voltar.
+          </div>
+        </div>
+      )}
       <header className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-3xl font-bold text-coco-900">Venda Rápida</h1>
@@ -243,7 +274,7 @@ export default function VendasPage() {
               📥 Importar Excel
             </Link>
           )}
-          <div className="text-xs text-coco-600">
+          <div className="text-xs text-coco-600 hidden sm:block">
             Atalhos: F2 fiado · Ctrl+Enter finalizar
           </div>
         </div>
@@ -298,21 +329,15 @@ export default function VendasPage() {
           </div>
 
           <div>
-            <label className="label">
-              Vendedor <span className="text-red-700">*</span>
-            </label>
-            <select
+            <SearchableSelect
+              label="Vendedor"
+              required
               value={sellerId}
-              onChange={(e) => setSellerId(e.target.value)}
-              className="input"
-            >
-              <option value="">— Selecione —</option>
-              {sellers.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
+              onChange={setSellerId}
+              items={sellers.map((s) => ({ id: s.id, label: s.name }))}
+              placeholder="— Selecione —"
+              allowClear={false}
+            />
             {sellers.length === 0 && (
               <p className="text-xs text-amber-700 mt-1">
                 Nenhum vendedor ativo. Cadastre em Configurações → Vendedores.
@@ -334,19 +359,17 @@ export default function VendasPage() {
               </p>
             </div>
             <div>
-              <label className="label">Cliente (opcional)</label>
-              <select
+              <SearchableSelect
+                label="Cliente (opcional)"
                 value={customerId}
-                onChange={(e) => setCustomerId(e.target.value)}
-                className="input"
-              >
-                <option value="">— Consumidor —</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
+                onChange={setCustomerId}
+                items={customers.map((c) => ({
+                  id: c.id,
+                  label: c.name,
+                  sublabel: c.phone ?? undefined,
+                }))}
+                placeholder="— Consumidor —"
+              />
             </div>
           </div>
 
@@ -405,21 +428,21 @@ export default function VendasPage() {
           <button
             onClick={finalizeSale}
             disabled={savingSale}
-            className="btn-primary mt-auto text-lg py-4"
+            className="btn-primary btn-touch mt-auto"
           >
             {savingSale ? "Salvando…" : "Finalizar Venda →"}
           </button>
           <button
             onClick={lancarFiado}
             disabled={savingSale || !customerId}
-            className="btn-secondary mt-2"
+            className="btn-secondary btn-touch mt-2"
             title={
               !customerId
                 ? "Selecione um cliente para lançar como fiado"
                 : "Lança a venda direto como fiado"
             }
           >
-            📒 Lançar como Fiado (F2)
+            📒 Lançar como Fiado
           </button>
           <button onClick={reset} className="btn-ghost mt-2">
             Limpar

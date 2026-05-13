@@ -16,6 +16,7 @@ import type {
 import { useToast } from "./Toast";
 import { useTenant } from "@/lib/useTenant";
 import PaymentEditor from "./PaymentEditor";
+import SearchableSelect from "./SearchableSelect";
 
 export default function SaleEditor({
   sale,
@@ -43,6 +44,9 @@ export default function SaleEditor({
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [confirmDeletePay, setConfirmDeletePay] = useState<SalePayment | null>(
+    null
+  );
   const [cargaStatus, setCargaStatus] = useState<string | null>(null);
   const [sellers, setSellers] = useState<Seller[]>([]);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
@@ -143,18 +147,13 @@ export default function SaleEditor({
   }
 
   async function deletePayment(p: SalePayment) {
-    if (
-      !confirm(
-        `Apagar pagamento de ${brl(Number(p.amount))} de ${fmtDate(p.paid_at)}?`
-      )
-    )
-      return;
     const { error } = await supabase
       .from("sale_payments")
       .delete()
       .eq("id", p.id);
     if (error) return toast.error(error.message);
     toast.success("Pagamento removido.");
+    setConfirmDeletePay(null);
     await loadPayments();
     onSaved();
   }
@@ -300,13 +299,13 @@ export default function SaleEditor({
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 my-6">
+    <div className="modal-backdrop" role="dialog" aria-modal="true">
+      <div className="modal-card modal-card--lg modal-pad">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-2xl font-bold text-coco-900">
             {isCanceled ? "Venda cancelada" : "Editar venda"}
           </h2>
-          <button onClick={onClose} className="btn-ghost">
+          <button onClick={onClose} className="btn-ghost" aria-label="Fechar">
             Fechar
           </button>
         </div>
@@ -340,10 +339,15 @@ export default function SaleEditor({
             <div>
               <label className="label">Quantidade</label>
               <input
-                type="number"
-                min={1}
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                enterKeyHint="next"
                 value={quantity}
-                onChange={(e) => setQuantity(parseInt(e.target.value || "1"))}
+                onChange={(e) =>
+                  setQuantity(parseInt(e.target.value.replace(/[^0-9]/g, "") || "0"))
+                }
+                onFocus={(e) => e.target.select()}
                 className="input"
                 disabled={isCanceled}
               />
@@ -351,12 +355,14 @@ export default function SaleEditor({
             <div>
               <label className="label">Unitário</label>
               <input
-                type="number"
-                step="0.01"
+                type="text"
+                inputMode="decimal"
+                enterKeyHint="next"
                 value={unitPrice}
                 onChange={(e) =>
-                  setUnitPrice(parseFloat(e.target.value || "0"))
+                  setUnitPrice(parseFloat(e.target.value.replace(",", ".") || "0"))
                 }
+                onFocus={(e) => e.target.select()}
                 className="input"
                 disabled={isCanceled}
               />
@@ -364,51 +370,45 @@ export default function SaleEditor({
             <div>
               <label className="label">Desconto</label>
               <input
-                type="number"
-                step="0.01"
+                type="text"
+                inputMode="decimal"
+                enterKeyHint="done"
                 value={discount}
                 onChange={(e) =>
-                  setDiscount(parseFloat(e.target.value || "0"))
+                  setDiscount(parseFloat(e.target.value.replace(",", ".") || "0"))
                 }
+                onFocus={(e) => e.target.select()}
                 className="input"
                 disabled={isCanceled}
               />
             </div>
           </div>
           <div>
-            <label className="label">Cliente</label>
-            <select
+            <SearchableSelect
+              label="Cliente"
               value={customerId}
-              onChange={(e) => setCustomerId(e.target.value)}
-              className="input"
+              onChange={setCustomerId}
+              items={customers.map((c) => ({
+                id: c.id,
+                label: c.name,
+                sublabel: c.phone ?? undefined,
+              }))}
+              placeholder="— Consumidor —"
               disabled={isCanceled}
-            >
-              <option value="">— Consumidor —</option>
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
+            />
           </div>
           <div>
-            <label className="label">
-              Vendedor {isAdmin ? "" : "(somente admin edita)"}
-            </label>
-            <select
+            <SearchableSelect
+              label={`Vendedor ${isAdmin ? "" : "(somente admin edita)"}`}
               value={sellerId}
-              onChange={(e) => setSellerId(e.target.value)}
-              className="input"
+              onChange={setSellerId}
+              items={sellers.map((s) => ({
+                id: s.id,
+                label: s.name + (s.active ? "" : " (inativo)"),
+              }))}
+              placeholder="— Sem vendedor —"
               disabled={isCanceled || !isAdmin}
-            >
-              <option value="">— Sem vendedor —</option>
-              {sellers.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                  {s.active ? "" : " (inativo)"}
-                </option>
-              ))}
-            </select>
+            />
           </div>
           <div>
             <label className="label">Observação</label>
@@ -506,7 +506,7 @@ export default function SaleEditor({
                           ✏️
                         </button>
                         <button
-                          onClick={() => deletePayment(p)}
+                          onClick={() => setConfirmDeletePay(p)}
                           className="btn-ghost text-xs px-1.5 text-red-700"
                           title="Apagar"
                           aria-label="Apagar pagamento"
@@ -592,38 +592,46 @@ export default function SaleEditor({
                 placeholder="Ex.: cliente desistiu, erro de digitação…"
               />
             </div>
-            <div className="flex justify-between gap-2 mt-5">
+            <div className="flex flex-col sm:flex-row sm:justify-between gap-2 mt-5 sticky bottom-0 bg-white pt-2">
               <button
                 onClick={() => setConfirmCancel(true)}
                 disabled={saving}
-                className="btn-danger"
+                className="btn-danger btn-touch order-2 sm:order-1"
               >
                 Cancelar venda
               </button>
-              <div className="flex gap-2">
-                <button onClick={onClose} className="btn-ghost" disabled={saving}>
+              <div className="flex flex-col-reverse sm:flex-row gap-2 order-1 sm:order-2">
+                <button
+                  onClick={onClose}
+                  className="btn-ghost btn-touch"
+                  disabled={saving}
+                >
                   Voltar
                 </button>
-                <button onClick={save} disabled={saving} className="btn-primary">
-                  {saving ? "…" : "Salvar"}
+                <button
+                  onClick={save}
+                  disabled={saving}
+                  className="btn-primary btn-touch"
+                >
+                  {saving ? "Salvando…" : "Salvar"}
                 </button>
               </div>
             </div>
           </>
         ) : (
-          <div className="flex justify-end gap-2 mt-5">
-            <button onClick={uncancelSale} className="btn-secondary">
+          <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 mt-5">
+            <button onClick={uncancelSale} className="btn-secondary btn-touch">
               Reverter cancelamento
             </button>
-            <button onClick={onClose} className="btn-primary">
+            <button onClick={onClose} className="btn-primary btn-touch">
               Fechar
             </button>
           </div>
         )}
 
         {showNewPayment && (
-          <div className="fixed inset-0 z-[90] bg-black/50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl p-6 max-w-md w-full">
+          <div className="modal-backdrop !z-[90]" role="dialog" aria-modal="true">
+            <div className="modal-card modal-card--md modal-pad">
               <h3 className="font-bold text-lg mb-3">Lançar pagamento</h3>
               <div className="space-y-3">
                 <div className="grid grid-cols-2 gap-3">
@@ -658,16 +666,20 @@ export default function SaleEditor({
                 <div>
                   <label className="label">Valor</label>
                   <input
-                    type="number"
-                    step="0.01"
+                    type="text"
+                    inputMode="decimal"
+                    enterKeyHint="done"
                     className="input text-2xl font-bold"
-                    value={newPay.amount}
+                    value={newPay.amount || ""}
                     onChange={(e) =>
                       setNewPay({
                         ...newPay,
-                        amount: parseFloat(e.target.value || "0"),
+                        amount: parseFloat(
+                          e.target.value.replace(",", ".") || "0"
+                        ),
                       })
                     }
+                    onFocus={(e) => e.target.select()}
                   />
                 </div>
                 <div>
@@ -684,14 +696,14 @@ export default function SaleEditor({
               {payErr && (
                 <p className="text-red-700 text-sm mt-3">{payErr}</p>
               )}
-              <div className="flex justify-end gap-2 mt-4">
+              <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 mt-4">
                 <button
                   onClick={() => setShowNewPayment(false)}
-                  className="btn-ghost"
+                  className="btn-ghost btn-touch"
                 >
                   Cancelar
                 </button>
-                <button onClick={addPayment} className="btn-primary">
+                <button onClick={addPayment} className="btn-primary btn-touch">
                   Lançar
                 </button>
               </div>
@@ -713,8 +725,8 @@ export default function SaleEditor({
         )}
 
         {showRefund && (
-          <div className="fixed inset-0 z-[90] bg-black/50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl p-6 max-w-md w-full">
+          <div className="modal-backdrop !z-[90]" role="dialog" aria-modal="true">
+            <div className="modal-card modal-card--md modal-pad">
               <h3 className="font-bold text-lg mb-2">Devolver cocos</h3>
               <p className="text-sm text-coco-700 mb-3">
                 Saldo disponível: <strong>{remainingQty}</strong> cocos.
@@ -723,14 +735,20 @@ export default function SaleEditor({
                 <div>
                   <label className="label">Quantidade a devolver</label>
                   <input
-                    type="number"
-                    min={1}
-                    max={remainingQty}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    enterKeyHint="done"
                     className="input text-2xl font-bold text-center"
                     value={refundQty || ""}
-                    onChange={(e) =>
-                      setRefundQty(parseInt(e.target.value || "0", 10) || 0)
-                    }
+                    onChange={(e) => {
+                      const n = parseInt(
+                        e.target.value.replace(/[^0-9]/g, "") || "0",
+                        10
+                      );
+                      setRefundQty(Math.min(n, remainingQty));
+                    }}
+                    onFocus={(e) => e.target.select()}
                     autoFocus
                   />
                   {refundQty > 0 && (
@@ -752,10 +770,10 @@ export default function SaleEditor({
               {refundError && (
                 <p className="text-red-700 text-sm mt-3">{refundError}</p>
               )}
-              <div className="flex justify-end gap-2 mt-5">
+              <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 mt-5">
                 <button
                   onClick={() => setShowRefund(false)}
-                  className="btn-ghost"
+                  className="btn-ghost btn-touch"
                   disabled={refundSaving}
                 >
                   Cancelar
@@ -763,9 +781,9 @@ export default function SaleEditor({
                 <button
                   onClick={confirmRefund}
                   disabled={refundSaving || refundQty <= 0}
-                  className="btn-primary"
+                  className="btn-primary btn-touch"
                 >
-                  {refundSaving ? "…" : "Confirmar devolução"}
+                  {refundSaving ? "Salvando…" : "Confirmar devolução"}
                 </button>
               </div>
             </div>
@@ -773,23 +791,51 @@ export default function SaleEditor({
         )}
 
         {confirmCancel && (
-          <div className="fixed inset-0 z-[90] bg-black/50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl p-6 max-w-sm w-full">
+          <div className="modal-backdrop !z-[90]" role="dialog" aria-modal="true">
+            <div className="modal-card modal-card--md modal-pad">
               <h3 className="font-bold text-lg mb-2">Cancelar esta venda?</h3>
               <p className="text-sm text-coco-700 mb-4">
                 Os pagamentos já lançados continuam no histórico, mas a venda
                 não conta mais para o saldo do cliente nem para o financeiro
                 como receita.
               </p>
-              <div className="flex justify-end gap-2">
+              <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
                 <button
                   onClick={() => setConfirmCancel(false)}
-                  className="btn-ghost"
+                  className="btn-ghost btn-touch"
                 >
                   Voltar
                 </button>
-                <button onClick={cancelSale} className="btn-danger">
+                <button onClick={cancelSale} className="btn-danger btn-touch">
                   Sim, cancelar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {confirmDeletePay && (
+          <div className="modal-backdrop !z-[90]" role="dialog" aria-modal="true">
+            <div className="modal-card modal-card--md modal-pad">
+              <h3 className="font-bold text-lg mb-2">Apagar pagamento?</h3>
+              <p className="text-sm text-coco-700 mb-4">
+                Pagamento de{" "}
+                <strong>{brl(Number(confirmDeletePay.amount))}</strong> em{" "}
+                {fmtDate(confirmDeletePay.paid_at)}. Esta ação não pode ser
+                desfeita.
+              </p>
+              <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                <button
+                  onClick={() => setConfirmDeletePay(null)}
+                  className="btn-ghost btn-touch"
+                >
+                  Voltar
+                </button>
+                <button
+                  onClick={() => deletePayment(confirmDeletePay)}
+                  className="btn-danger btn-touch"
+                >
+                  Sim, apagar
                 </button>
               </div>
             </div>

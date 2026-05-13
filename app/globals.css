@@ -18,7 +18,7 @@ body {
     @apply bg-white rounded-2xl shadow-sm border border-coco-100 p-5;
   }
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 font-semibold transition active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 font-semibold transition active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px];
   }
   .btn-primary {
     @apply btn bg-coco-600 text-white hover:bg-coco-700;
@@ -32,8 +32,12 @@ body {
   .btn-ghost {
     @apply btn bg-transparent text-coco-700 hover:bg-coco-100;
   }
+  /* Tap target maior para fluxos críticos de rua. */
+  .btn-touch {
+    @apply min-h-[56px] text-lg px-5;
+  }
   .input {
-    @apply w-full rounded-xl border border-coco-200 bg-white px-3 py-2 outline-none focus:border-coco-500 focus:ring-2 focus:ring-coco-200;
+    @apply w-full rounded-xl border border-coco-200 bg-white px-3 py-2 outline-none focus:border-coco-500 focus:ring-2 focus:ring-coco-200 min-h-[44px] text-base;
   }
   .label {
     @apply block text-sm font-medium text-coco-800 mb-1;
@@ -49,5 +53,53 @@ body {
   }
   .badge {
     @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold;
+  }
+
+  /* Modal: fullscreen-bottom-sheet no mobile, centralizado no desktop. */
+  .modal-backdrop {
+    @apply fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center sm:p-4;
+  }
+  .modal-card {
+    @apply bg-white shadow-xl w-full max-h-[95dvh] sm:max-h-[90dvh] overflow-y-auto
+           rounded-t-2xl sm:rounded-2xl;
+    padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
+  }
+  .modal-card--md {
+    @apply sm:max-w-md;
+  }
+  .modal-card--lg {
+    @apply sm:max-w-lg;
+  }
+  .modal-card--xl {
+    @apply sm:max-w-2xl;
+  }
+  .modal-pad {
+    @apply p-5 sm:p-6;
+  }
+
+  /* Chip de forma de pagamento — touch-friendly. */
+  .chip-pay {
+    @apply flex flex-col items-center justify-center gap-1 rounded-2xl border-2 border-coco-200
+           bg-white text-coco-800 font-semibold px-3 py-3 min-h-[64px]
+           transition active:scale-[.97] hover:border-coco-400;
+  }
+  .chip-pay--active {
+    @apply border-coco-600 bg-coco-50 text-coco-900;
+  }
+}
+
+/* Evita zoom automático no iOS em inputs com fonte < 16px. */
+@media (max-width: 640px) {
+  input[type="text"],
+  input[type="number"],
+  input[type="tel"],
+  input[type="email"],
+  input[type="password"],
+  input[type="search"],
+  input[type="date"],
+  input[type="datetime-local"],
+  select,
+  textarea {
+    font-size: 16px;
   }
 }

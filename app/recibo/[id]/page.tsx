@@ -59,16 +59,46 @@ export default function ReciboPage() {
   return (
     <div className="min-h-screen bg-white text-coco-900 p-6">
       <div className="max-w-md mx-auto">
-        <div className="flex justify-between items-center mb-4 print:hidden">
+        <div className="flex items-center justify-between mb-4 print:hidden gap-2">
           <a href="/vendas" className="text-coco-700 underline text-sm">
             ← Voltar
           </a>
-          <button
-            onClick={() => window.print()}
-            className="btn-primary"
-          >
-            🖨 Imprimir
-          </button>
+          <div className="flex gap-2">
+            {(() => {
+              const url =
+                typeof window !== "undefined"
+                  ? `${window.location.origin}/recibo/${sale.id}`
+                  : `/recibo/${sale.id}`;
+              const msg =
+                `Recibo Coco da Amazônia\n` +
+                `${customer ? customer.name + "\n" : ""}` +
+                `${sale.quantity} × ${brl(Number(sale.unit_price))}\n` +
+                `Total: ${brl(Number(sale.total))}\n` +
+                (remaining > 0 ? `Em aberto: ${brl(remaining)}\n` : "") +
+                `${url}`;
+              const phoneDigits = (customer?.phone ?? "").replace(/\D/g, "");
+              const target =
+                phoneDigits.length >= 10
+                  ? `https://wa.me/${
+                      phoneDigits.startsWith("55") ? phoneDigits : "55" + phoneDigits
+                    }?text=${encodeURIComponent(msg)}`
+                  : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+              return (
+                <a
+                  href={target}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-secondary"
+                  aria-label="Compartilhar recibo no WhatsApp"
+                >
+                  📲 WhatsApp
+                </a>
+              );
+            })()}
+            <button onClick={() => window.print()} className="btn-primary">
+              🖨 Imprimir
+            </button>
+          </div>
         </div>
 
         <div className="recibo-card border border-coco-200 rounded-2xl p-5 print:border-0">

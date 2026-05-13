@@ -27,7 +27,7 @@ export default function FornecedoresPage() {
 
   async function load() {
     setLoading(true);
-    const q = supabase.from("suppliers").select("*").order("name");
+    const q = supabase.from("suppliers").select("*").order("name").limit(1000);
     if (!showInactive) q.eq("active", true);
     const { data } = await q;
     setSuppliers((data ?? []) as Supplier[]);

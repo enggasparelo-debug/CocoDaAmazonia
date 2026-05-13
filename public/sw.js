@@ -1,5 +1,6 @@
-const CACHE = "coco-shell-v2";
+const CACHE = "coco-shell-v3";
 const SHELL = ["/", "/login", "/manifest.json", "/icons/icon.svg"];
+const NETWORK_TIMEOUT = 3000;
 
 self.addEventListener("install", (e) => {
   e.waitUntil(
@@ -21,20 +22,56 @@ self.addEventListener("activate", (e) => {
   self.clients.claim();
 });
 
+function fromNetwork(req, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("timeout")), timeoutMs);
+    fetch(req).then(
+      (res) => {
+        clearTimeout(t);
+        resolve(res);
+      },
+      (err) => {
+        clearTimeout(t);
+        reject(err);
+      }
+    );
+  });
+}
+
 self.addEventListener("fetch", (e) => {
   const req = e.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
 
+  // Assets versionados do Next: cache-first (instantâneo, sem timeout).
+  if (url.pathname.startsWith("/_next/static/")) {
+    e.respondWith(
+      caches.match(req).then((cached) => {
+        if (cached) return cached;
+        return fetch(req)
+          .then((res) => {
+            const copy = res.clone();
+            caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+            return res;
+          })
+          .catch(() => caches.match("/"));
+      })
+    );
+    return;
+  }
+
+  // Resto: network-first com timeout 3s; fallback pro cache (ou shell raiz).
   e.respondWith(
-    fetch(req)
+    fromNetwork(req, NETWORK_TIMEOUT)
       .then((res) => {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
         return res;
       })
-      .catch(() => caches.match(req).then((r) => r || caches.match("/")))
+      .catch(() =>
+        caches.match(req).then((r) => r || caches.match("/"))
+      )
   );
 });
 

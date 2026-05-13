@@ -18,6 +18,8 @@ export default function CaixaPage() {
   const [openingAmt, setOpeningAmt] = useState<number>(0);
   const [closingAmt, setClosingAmt] = useState<number>(0);
   const [openConfirm, setOpenConfirm] = useState(false);
+  const [closeConfirm, setCloseConfirm] = useState(false);
+  const [acceptDiff, setAcceptDiff] = useState(false);
   const [moveKind, setMoveKind] = useState<"suprimento" | "sangria">("sangria");
   const [moveAmt, setMoveAmt] = useState<number>(0);
   const [moveNotes, setMoveNotes] = useState("");
@@ -135,6 +137,7 @@ export default function CaixaPage() {
 
   async function closeSession() {
     if (!session) return;
+    setCloseConfirm(false);
     const { error } = await supabase
       .from("cash_sessions")
       .update({
@@ -145,8 +148,12 @@ export default function CaixaPage() {
     if (error) return toast.error(error.message);
     toast.success("Caixa fechado.");
     setClosingAmt(0);
+    setAcceptDiff(false);
     load();
   }
+
+  const diff = +(closingAmt - expected).toFixed(2);
+  const hasDiff = diff !== 0;
 
   return (
     <div className="space-y-6">
@@ -165,15 +172,22 @@ export default function CaixaPage() {
           <h2 className="font-bold text-coco-900 mb-3">Abrir caixa</h2>
           <label className="label">Troco / saldo inicial (R$)</label>
           <input
-            type="number"
-            step="0.01"
-            value={openingAmt}
-            onChange={(e) => setOpeningAmt(parseFloat(e.target.value || "0"))}
+            type="text"
+            inputMode="decimal"
+            enterKeyHint="done"
+            value={openingAmt || ""}
+            onChange={(e) =>
+              setOpeningAmt(
+                parseFloat(e.target.value.replace(",", ".") || "0")
+              )
+            }
+            onFocus={(e) => e.target.select()}
+            placeholder="0,00"
             className="input text-2xl font-bold"
           />
           <button
             onClick={() => setOpenConfirm(true)}
-            className="btn-primary mt-3 w-full"
+            className="btn-primary btn-touch mt-3 w-full"
           >
             Abrir caixa
           </button>
@@ -240,10 +254,16 @@ export default function CaixaPage() {
               </div>
               <div className="space-y-2">
                 <input
-                  type="number"
-                  step="0.01"
-                  value={moveAmt}
-                  onChange={(e) => setMoveAmt(parseFloat(e.target.value || "0"))}
+                  type="text"
+                  inputMode="decimal"
+                  enterKeyHint="next"
+                  value={moveAmt || ""}
+                  onChange={(e) =>
+                    setMoveAmt(
+                      parseFloat(e.target.value.replace(",", ".") || "0")
+                    )
+                  }
+                  onFocus={(e) => e.target.select()}
                   className="input text-lg"
                   placeholder="Valor R$"
                 />
@@ -252,8 +272,12 @@ export default function CaixaPage() {
                   onChange={(e) => setMoveNotes(e.target.value)}
                   className="input"
                   placeholder="Observação (ex.: troco, recolhido pelo dono)"
+                  enterKeyHint="done"
                 />
-                <button onClick={addMovement} className="btn-secondary w-full">
+                <button
+                  onClick={addMovement}
+                  className="btn-secondary btn-touch w-full"
+                >
                   Registrar
                 </button>
               </div>
@@ -296,12 +320,17 @@ export default function CaixaPage() {
               </p>
               <label className="label">Dinheiro contado (R$)</label>
               <input
-                type="number"
-                step="0.01"
-                value={closingAmt}
+                type="text"
+                inputMode="decimal"
+                enterKeyHint="done"
+                value={closingAmt || ""}
                 onChange={(e) =>
-                  setClosingAmt(parseFloat(e.target.value || "0"))
+                  setClosingAmt(
+                    parseFloat(e.target.value.replace(",", ".") || "0")
+                  )
                 }
+                onFocus={(e) => e.target.select()}
+                placeholder="0,00"
                 className="input text-2xl font-bold"
               />
               <div className="text-sm mt-3">
@@ -317,21 +346,52 @@ export default function CaixaPage() {
                   <span>Diferença</span>
                   <span
                     className={`font-bold ${
-                      closingAmt - expected === 0
+                      !hasDiff
                         ? "text-green-700"
+                        : diff < 0
+                        ? "text-red-700"
                         : "text-amber-700"
                     }`}
                   >
-                    {brl(closingAmt - expected)}
+                    {hasDiff && diff > 0 && "+"}{brl(diff)}
                   </span>
                 </div>
               </div>
+              {hasDiff && (
+                <label className="mt-3 flex items-start gap-2 text-sm rounded-xl border border-amber-300 bg-amber-50 p-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={acceptDiff}
+                    onChange={(e) => setAcceptDiff(e.target.checked)}
+                    className="mt-1"
+                  />
+                  <span>
+                    <strong>
+                      {diff < 0 ? "Falta" : "Sobra"} de {brl(Math.abs(diff))}.
+                    </strong>{" "}
+                    Confirmo que conferi e quero fechar mesmo com diferença.
+                  </span>
+                </label>
+              )}
               <button
-                onClick={closeSession}
-                className="btn-danger w-full mt-3"
+                onClick={() => setCloseConfirm(true)}
+                disabled={closingAmt <= 0 || (hasDiff && !acceptDiff)}
+                className="btn-danger btn-touch w-full mt-3"
               >
                 Fechar caixa
               </button>
+              {closeConfirm && (
+                <ConfirmModal
+                  title="Fechar caixa?"
+                  message={
+                    hasDiff
+                      ? `Diferença de ${brl(diff)}. Continuar?`
+                      : `Dinheiro contado: ${brl(closingAmt)}. Confere?`
+                  }
+                  onCancel={() => setCloseConfirm(false)}
+                  onConfirm={closeSession}
+                />
+              )}
             </div>
           </div>
         </>
