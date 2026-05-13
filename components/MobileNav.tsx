@@ -32,6 +32,7 @@ const items: NavItem[] = [
   { href: "/financeiro", label: "Financeiro", icon: "💰", roles: ["admin"] },
   { href: "/operadores", label: "Operadores", icon: "🧑‍💼", roles: ["admin"] },
   { href: "/relatorios", label: "Relatórios", icon: "📈", roles: ["admin"] },
+  { href: "/vendas/importar", label: "Importar Excel", icon: "📥", roles: ["admin"] },
   { href: "/configuracoes", label: "Configurações", icon: "⚙️", roles: ["admin"] },
   { href: "/auditoria", label: "Auditoria", icon: "🔍", roles: ["admin"] },
 ];
@@ -46,6 +47,11 @@ export default function MobileNav() {
   const visible = items.filter((i) => i.roles.includes(role));
   const quickHref = isAdmin ? "/vendas" : "/carga";
   const payablesAlert = usePayablesAlert();
+  const activeHref = visible
+    .filter((i) =>
+      i.href === "/" ? path === "/" : path === i.href || path.startsWith(i.href + "/")
+    )
+    .sort((a, b) => b.href.length - a.href.length)[0]?.href;
 
   async function logout() {
     await supabase.auth.signOut();
@@ -87,8 +93,7 @@ export default function MobileNav() {
             </div>
             <nav className="space-y-1 flex-1">
               {visible.map((it) => {
-                const active =
-                  it.href === "/" ? path === "/" : path.startsWith(it.href);
+                const active = it.href === activeHref;
                 return (
                   <Link
                     key={it.href}

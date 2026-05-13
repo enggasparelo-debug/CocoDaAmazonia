@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { errorMessage } from "@/lib/ui";
-import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { brl, fmtBrNumber, parseBrNumber } from "@/lib/format";
 import { nowLocalIso } from "@/lib/datetime";
@@ -19,10 +18,12 @@ import { useTenant } from "@/lib/useTenant";
 import { useOnline } from "@/lib/useOnline";
 import SearchableSelect from "@/components/SearchableSelect";
 
+const QTY_SHORTCUTS = [5, 10, 20, 50];
+
 export default function VendasPage() {
   const supabase = createClient();
   const toast = useToast();
-  const { seller: mySeller, isAdmin } = useTenant();
+  const { seller: mySeller } = useTenant();
   const online = useOnline();
   const [settings, setSettings] = useState<ProductSettings | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -69,6 +70,16 @@ export default function VendasPage() {
     () => Math.max(0, +(subtotal - discount).toFixed(2)),
     [subtotal, discount]
   );
+
+  const selectedCustomer = useMemo(
+    () => customers.find((c) => c.id === customerId) ?? null,
+    [customers, customerId]
+  );
+
+  const priceChanged = useMemo(() => {
+    if (!settings) return false;
+    return Math.abs(unitPrice - Number(settings.unit_price)) > 0.001;
+  }, [unitPrice, settings]);
 
   async function loadData() {
     const [s, c, m, sl] = await Promise.all([
@@ -183,6 +194,13 @@ export default function VendasPage() {
     return null;
   }
 
+  function stepQty(delta: number) {
+    setQuantity((cur) => {
+      const n = parseInt(cur || "0", 10) || 0;
+      return String(Math.max(0, n + delta));
+    });
+  }
+
   async function finalizeSale() {
     const err = validate();
     if (err) return toast.error(err);
@@ -289,8 +307,11 @@ export default function VendasPage() {
   const selectOnFocus = (e: React.FocusEvent<HTMLInputElement>) =>
     e.target.select();
 
+  const finalizeLabel = savingSale ? "Salvando…" : "Finalizar →";
+
   return (
-    <div className="space-y-6">
+    // pb-40 garante que o conteúdo não fica embaixo do bottom-bar fixo
+    <div className="space-y-4 pb-40 lg:pb-6">
       {!online && (
         <div className="rounded-xl border border-amber-300 bg-amber-50 text-amber-900 px-4 py-3 flex items-center gap-2">
           <span className="text-xl" aria-hidden>📡</span>
@@ -302,72 +323,80 @@ export default function VendasPage() {
       )}
       <header className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-3xl font-bold text-coco-900">Venda Rápida</h1>
-          <p className="text-coco-600">
+          <h1 className="text-2xl sm:text-3xl font-bold text-coco-900">Venda Rápida</h1>
+          <p className="text-coco-600 text-sm hidden sm:block">
             {settings?.name ?? "Coco Verde"} · preço atual{" "}
             <strong>{brl(Number(settings?.unit_price ?? 0))}</strong>
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          {isAdmin && (
-            <Link href="/vendas/importar" className="btn-secondary">
-              📥 Importar Excel
-            </Link>
-          )}
-          <div className="text-xs text-coco-600 hidden sm:block">
-            Atalhos: F2 fiado · Ctrl+Enter finalizar
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={reset}
+            className="btn-ghost text-sm"
+            aria-label="Limpar formulário"
+          >
+            ↺ Limpar
+          </button>
+          <div className="text-xs text-coco-600 hidden lg:block">
+            F2 fiado · Ctrl+Enter finalizar
           </div>
         </div>
       </header>
 
       <div className="grid lg:grid-cols-3 gap-6">
-        <div className="card lg:col-span-2 space-y-5">
+        <div className="card lg:col-span-2 space-y-4">
+          {/* Stepper de quantidade — o protagonista da Venda Rápida */}
           <div>
             <label className="label">Quantidade</label>
-            <input
-              type="text"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              value={quantity}
-              onChange={(e) =>
-                setQuantity(e.target.value.replace(/[^0-9]/g, ""))
-              }
-              onFocus={selectOnFocus}
-              placeholder="0"
-              autoFocus
-              className="input text-4xl text-center font-bold h-16"
-            />
-          </div>
-
-          <div className="grid sm:grid-cols-2 gap-4">
-            <div>
-              <label className="label">Valor unitário (R$)</label>
+            <div className="flex items-stretch gap-2">
+              <button
+                type="button"
+                onClick={() => stepQty(-1)}
+                disabled={qty <= 0}
+                aria-label="Diminuir quantidade"
+                className="rounded-xl bg-coco-100 text-coco-800 hover:bg-coco-200 active:scale-[.97] transition disabled:opacity-30 disabled:cursor-not-allowed w-16 min-h-[64px] text-3xl font-bold flex items-center justify-center"
+              >
+                −
+              </button>
               <input
                 type="text"
-                inputMode="decimal"
-                value={unitPriceStr}
+                inputMode="numeric"
+                pattern="[0-9]*"
+                enterKeyHint="next"
+                value={quantity}
                 onChange={(e) =>
-                  setUnitPriceStr(e.target.value.replace(/[^0-9.,]/g, ""))
+                  setQuantity(e.target.value.replace(/[^0-9]/g, ""))
                 }
                 onFocus={selectOnFocus}
-                className="input text-2xl font-semibold"
+                placeholder="0"
+                autoFocus
+                className="input text-4xl text-center font-bold flex-1 min-h-[64px]"
               />
+              <button
+                type="button"
+                onClick={() => stepQty(+1)}
+                aria-label="Aumentar quantidade"
+                className="rounded-xl bg-coco-600 text-white hover:bg-coco-700 active:scale-[.97] transition w-16 min-h-[64px] text-3xl font-bold flex items-center justify-center"
+              >
+                ＋
+              </button>
             </div>
-            <div>
-              <label className="label">Desconto (R$)</label>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={discountStr}
-                onChange={(e) =>
-                  setDiscountStr(e.target.value.replace(/[^0-9.,]/g, ""))
-                }
-                onFocus={selectOnFocus}
-                className="input text-2xl font-semibold"
-              />
+            <div className="flex flex-wrap gap-2 mt-2">
+              {QTY_SHORTCUTS.map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setQuantity(String(n))}
+                  className="rounded-full border border-coco-200 px-3 py-1 text-sm text-coco-700 hover:bg-coco-50 active:scale-[.97] transition"
+                >
+                  {n}
+                </button>
+              ))}
             </div>
           </div>
 
+          {/* Vendedor — sempre visível, obrigatório */}
           <div>
             <SearchableSelect
               label="Vendedor"
@@ -385,22 +414,77 @@ export default function VendasPage() {
             )}
           </div>
 
-          <div className="grid sm:grid-cols-2 gap-4">
-            <div>
-              <label className="label">Data da venda</label>
-              <input
-                type="datetime-local"
-                value={saleDate}
-                onChange={(e) => setSaleDate(e.target.value)}
-                className="input"
-              />
-              <p className="text-xs text-coco-600 mt-1">
-                Padrão: agora. Pode ajustar para registrar uma venda passada.
-              </p>
+          {/* Disclosures pra reduzir poluição visual no caso comum */}
+          <details className="rounded-xl border border-coco-100 bg-coco-50/40 px-3 group">
+            <summary className="cursor-pointer select-none text-coco-700 py-3 flex items-center justify-between list-none">
+              <span>
+                💰 Preço e desconto
+                {priceChanged && (
+                  <span className="ml-2 text-xs font-semibold text-amber-700">
+                    (preço alterado)
+                  </span>
+                )}
+                {discount > 0 && (
+                  <span className="ml-2 text-xs font-semibold text-amber-700">
+                    (desconto {brl(discount)})
+                  </span>
+                )}
+              </span>
+              <span className="text-coco-500 group-open:rotate-180 transition" aria-hidden>
+                ▾
+              </span>
+            </summary>
+            <div className="grid sm:grid-cols-2 gap-3 pb-3 pt-1">
+              <div>
+                <label className="label">Valor unitário (R$)</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  enterKeyHint="next"
+                  value={unitPriceStr}
+                  onChange={(e) =>
+                    setUnitPriceStr(e.target.value.replace(/[^0-9.,]/g, ""))
+                  }
+                  onFocus={selectOnFocus}
+                  className="input text-xl font-semibold"
+                />
+              </div>
+              <div>
+                <label className="label">Desconto (R$)</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  enterKeyHint="done"
+                  value={discountStr}
+                  onChange={(e) =>
+                    setDiscountStr(e.target.value.replace(/[^0-9.,]/g, ""))
+                  }
+                  onFocus={selectOnFocus}
+                  className="input text-xl font-semibold"
+                />
+              </div>
             </div>
-            <div>
+          </details>
+
+          <details
+            className="rounded-xl border border-coco-100 bg-coco-50/40 px-3 group"
+            open={!!customerId}
+          >
+            <summary className="cursor-pointer select-none text-coco-700 py-3 flex items-center justify-between list-none">
+              <span>
+                👤 Cliente{" "}
+                {selectedCustomer ? (
+                  <strong className="text-coco-900">— {selectedCustomer.name}</strong>
+                ) : (
+                  <span className="text-coco-500">(Consumidor)</span>
+                )}
+              </span>
+              <span className="text-coco-500 group-open:rotate-180 transition" aria-hidden>
+                ▾
+              </span>
+            </summary>
+            <div className="pb-3 pt-1 space-y-2">
               <SearchableSelect
-                label="Cliente (opcional)"
                 value={customerId}
                 onChange={setCustomerId}
                 items={customers.map((c) => ({
@@ -410,18 +494,31 @@ export default function VendasPage() {
                 }))}
                 placeholder="— Consumidor —"
               />
+              {customerBalance && (
+                <div className="flex items-center justify-between text-sm rounded-xl border border-coco-200 px-3 py-2 bg-white">
+                  <span>
+                    Saldo em aberto:{" "}
+                    <strong>{brl(Number(customerBalance.open_balance))}</strong>
+                    {customerBalance.credit_limit != null && (
+                      <>
+                        {" "}· limite{" "}
+                        <strong>
+                          {brl(Number(customerBalance.credit_limit))}
+                        </strong>
+                      </>
+                    )}
+                  </span>
+                  {customerBalance.credit_limit != null &&
+                    Number(customerBalance.open_balance) + total >
+                      Number(customerBalance.credit_limit) && (
+                      <span className="text-amber-700 font-semibold">
+                        ⚠ excede limite
+                      </span>
+                    )}
+                </div>
+              )}
             </div>
-          </div>
-
-          <div>
-            <label className="label">Observação</label>
-            <input
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              className="input"
-              placeholder="Ex.: entrega na praia, troco para R$ 100…"
-            />
-          </div>
+          </details>
 
           {lastSale && customerId && (
             <button
@@ -450,33 +547,48 @@ export default function VendasPage() {
             </button>
           )}
 
-          {customerBalance && (
-            <div className="flex items-center justify-between text-sm rounded-xl border border-coco-200 px-3 py-2 bg-coco-50">
+          <details className="rounded-xl border border-coco-100 bg-coco-50/40 px-3 group">
+            <summary className="cursor-pointer select-none text-coco-700 py-3 flex items-center justify-between list-none">
               <span>
-                Saldo em aberto deste cliente:{" "}
-                <strong>{brl(Number(customerBalance.open_balance))}</strong>
-                {customerBalance.credit_limit != null && (
-                  <>
-                    {" "}
-                    · limite{" "}
-                    <strong>
-                      {brl(Number(customerBalance.credit_limit))}
-                    </strong>
-                  </>
-                )}
-              </span>
-              {customerBalance.credit_limit != null &&
-                Number(customerBalance.open_balance) + total >
-                  Number(customerBalance.credit_limit) && (
-                  <span className="text-amber-700 font-semibold">
-                    ⚠ Esta venda fiada excede o limite
+                📅 Data e observação
+                {notes && (
+                  <span className="ml-2 text-xs text-coco-600">
+                    · &ldquo;{notes.length > 20 ? notes.slice(0, 20) + "…" : notes}&rdquo;
                   </span>
                 )}
+              </span>
+              <span className="text-coco-500 group-open:rotate-180 transition" aria-hidden>
+                ▾
+              </span>
+            </summary>
+            <div className="grid sm:grid-cols-2 gap-3 pb-3 pt-1">
+              <div>
+                <label className="label">Data da venda</label>
+                <input
+                  type="datetime-local"
+                  value={saleDate}
+                  onChange={(e) => setSaleDate(e.target.value)}
+                  className="input"
+                />
+                <p className="text-xs text-coco-600 mt-1">
+                  Padrão: agora. Pode registrar uma venda passada.
+                </p>
+              </div>
+              <div>
+                <label className="label">Observação</label>
+                <input
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  className="input"
+                  placeholder="Ex.: entrega na praia, troco para R$ 100…"
+                />
+              </div>
             </div>
-          )}
+          </details>
         </div>
 
-        <div className="card flex flex-col">
+        {/* Resumo lateral — só desktop. No mobile, a bottom-bar fixa cumpre esse papel. */}
+        <div className="card hidden lg:flex flex-col">
           <div className="text-coco-700 text-sm">Subtotal</div>
           <div className="text-2xl text-coco-800">{brl(subtotal)}</div>
           {discount > 0 && (
@@ -497,23 +609,55 @@ export default function VendasPage() {
             disabled={savingSale}
             className="btn-primary btn-touch mt-auto"
           >
-            {savingSale ? "Salvando…" : "Finalizar Venda →"}
+            {finalizeLabel}
           </button>
           <button
             onClick={lancarFiado}
-            disabled={savingSale || !customerId}
+            disabled={savingSale}
             className="btn-secondary btn-touch mt-2"
             title={
               !customerId
-                ? "Selecione um cliente para lançar como fiado"
+                ? "Selecione um cliente abaixo para lançar como fiado"
                 : "Lança a venda direto como fiado"
             }
           >
             📒 Lançar como Fiado
           </button>
-          <button onClick={reset} className="btn-ghost mt-2">
-            Limpar
-          </button>
+        </div>
+      </div>
+
+      {/* Bottom-bar sticky — atalho de finalização no mobile/tablet */}
+      <div
+        className="lg:hidden fixed inset-x-0 bottom-0 z-30 bg-white border-t border-coco-200 shadow-[0_-4px_12px_rgba(0,0,0,0.06)]"
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      >
+        <div className="px-4 pt-3 pb-3 max-w-7xl mx-auto">
+          <div className="flex items-baseline justify-between mb-2">
+            <div className="text-xs text-coco-600 truncate">
+              {qty || 0} × {brl(unitPrice)}
+              {discount > 0 ? ` − ${brl(discount)}` : ""}
+            </div>
+            <div className="text-2xl font-extrabold text-coco-900">
+              {brl(total)}
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={lancarFiado}
+              disabled={savingSale}
+              className="btn-secondary btn-touch flex-1"
+              aria-label="Lançar como fiado"
+            >
+              📒 Fiado
+            </button>
+            <button
+              onClick={finalizeSale}
+              disabled={savingSale}
+              className="btn-primary btn-touch flex-[2]"
+            >
+              {finalizeLabel}
+            </button>
+          </div>
         </div>
       </div>
 
