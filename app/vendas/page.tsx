@@ -241,40 +241,6 @@ export default function VendasPage() {
     }
   }
 
-  async function lancarFiado() {
-    if (!customerId)
-      return toast.error("Selecione um cliente para lançar como fiado.");
-    const err = validate();
-    if (err) return toast.error(err);
-    setSavingSale(true);
-    const payload = {
-      ...buildPayload(),
-      notes: notes ? `${notes} · fiado` : "fiado",
-    };
-    try {
-      if (typeof navigator !== "undefined" && !navigator.onLine) {
-        await enqueueSale(payload);
-        toast.warn(`Sem conexão — venda enfileirada (${brl(total)}).`);
-        reset();
-        return;
-      }
-      const { error } = await supabase.from("sales").insert(payload);
-      if (error) throw error;
-      toast.success(`Venda fiada de ${brl(total)} lançada.`);
-      reset();
-    } catch (e: unknown) {
-      try {
-        await enqueueSale(payload);
-        toast.warn(`Falhou online — venda enfileirada (${brl(total)}).`);
-        reset();
-      } catch {
-        toast.error(errorMessage(e));
-      }
-    } finally {
-      setSavingSale(false);
-    }
-  }
-
   function reset() {
     setQuantity("");
     setDiscountStr("0");
@@ -288,13 +254,9 @@ export default function VendasPage() {
     if (settings) setUnitPriceStr(fmtBrNumber(Number(settings.unit_price)));
   }
 
-  // Atalhos de teclado (apenas em desktop / fora dos inputs)
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "F2") {
-        e.preventDefault();
-        lancarFiado();
-      } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         finalizeSale();
       }
@@ -339,7 +301,7 @@ export default function VendasPage() {
             ↺ Limpar
           </button>
           <div className="text-xs text-coco-600 hidden lg:block">
-            F2 fiado · Ctrl+Enter finalizar
+            Ctrl+Enter finalizar
           </div>
         </div>
       </header>
@@ -611,18 +573,9 @@ export default function VendasPage() {
           >
             {finalizeLabel}
           </button>
-          <button
-            onClick={lancarFiado}
-            disabled={savingSale}
-            className="btn-secondary btn-touch mt-2"
-            title={
-              !customerId
-                ? "Selecione um cliente abaixo para lançar como fiado"
-                : "Lança a venda direto como fiado"
-            }
-          >
-            📒 Lançar como Fiado
-          </button>
+          <p className="text-xs text-coco-600 mt-2 text-center">
+            No próximo passo você recebe agora ou deixa pendente (fiado).
+          </p>
         </div>
       </div>
 
@@ -641,23 +594,13 @@ export default function VendasPage() {
               {brl(total)}
             </div>
           </div>
-          <div className="flex gap-2">
-            <button
-              onClick={lancarFiado}
-              disabled={savingSale}
-              className="btn-secondary btn-touch flex-1"
-              aria-label="Lançar como fiado"
-            >
-              📒 Fiado
-            </button>
-            <button
-              onClick={finalizeSale}
-              disabled={savingSale}
-              className="btn-primary btn-touch flex-[2]"
-            >
-              {finalizeLabel}
-            </button>
-          </div>
+          <button
+            onClick={finalizeSale}
+            disabled={savingSale}
+            className="btn-primary btn-touch w-full"
+          >
+            {finalizeLabel}
+          </button>
         </div>
       </div>
 
