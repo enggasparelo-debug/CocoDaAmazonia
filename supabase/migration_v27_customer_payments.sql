@@ -72,6 +72,12 @@ insert into public.customer_payments
 select tenant_id, customer_id, payment_method_id, amount, paid_at, notes, created_by
 from grouped;
 
+-- Desabilita o trigger de check só pro UPDATE do backfill: ele valida
+-- paid_at >= sale.created_at e em alguns sale_payments antigos isso é
+-- violado (backdating histórico). Estamos só setando receipt_id, não
+-- mexendo em paid_at/amount, então é seguro pular o re-check.
+alter table public.sale_payments disable trigger trg_sale_payments_check;
+
 update public.sale_payments sp
    set receipt_id = cp.id
   from public.customer_payments cp,
@@ -81,3 +87,5 @@ update public.sale_payments sp
    and sp.payment_method_id = cp.payment_method_id
    and sp.paid_at = cp.paid_at
    and sp.receipt_id is null;
+
+alter table public.sale_payments enable trigger trg_sale_payments_check;
