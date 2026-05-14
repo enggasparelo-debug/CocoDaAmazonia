@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
@@ -8,6 +8,7 @@ import { brl, fmtDate, fmtDateOnly } from "@/lib/format";
 import { nowLocalIso } from "@/lib/datetime";
 import type {
   Customer,
+  CustomerPayment,
   PaymentMethod,
   Sale,
   SalePayment,
@@ -69,12 +70,16 @@ export default function ClienteDetalhePage() {
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [sales, setSales] = useState<Sale[]>([]);
   const [payments, setPayments] = useState<SalePayment[]>([]);
+  const [receipts, setReceipts] = useState<CustomerPayment[]>([]);
+  const [expandedReceipts, setExpandedReceipts] = useState<Set<string>>(new Set());
   const [methods, setMethods] = useState<Record<string, PaymentMethod>>({});
   const [methodList, setMethodList] = useState<PaymentMethod[]>([]);
   const [allCustomers, setAllCustomers] = useState<Customer[]>([]);
   const [profitability, setProfitability] = useState<CustomerProfitability | null>(null);
   const [loading, setLoading] = useState(true);
   const [confirmDelete, setConfirmDelete] = useState<SalePayment | null>(null);
+  const [confirmDeleteReceipt, setConfirmDeleteReceipt] =
+    useState<CustomerPayment | null>(null);
   const [editingSale, setEditingSale] = useState<Sale | null>(null);
   const [editingPayment, setEditingPayment] = useState<SalePayment | null>(null);
   const [confirmDeleteSale, setConfirmDeleteSale] = useState<Sale | null>(null);
@@ -131,6 +136,12 @@ export default function ClienteDetalhePage() {
     } else {
       setPayments([]);
     }
+    const { data: rData } = await supabase
+      .from("customer_payments")
+      .select("*")
+      .eq("customer_id", id)
+      .order("paid_at", { ascending: false });
+    setReceipts((rData as CustomerPayment[]) ?? []);
     setLoading(false);
   }
 
@@ -198,43 +209,63 @@ export default function ClienteDetalhePage() {
       return setBulkError("A data do pagamento não pode ser no futuro.");
     }
 
+    // Pré-calcula os abatimentos (FIFO) pra saber o total efetivo do recibo.
     let remaining = +bulkAmount.toFixed(2);
-    const inserts: {
-      sale_id: string;
-      payment_method_id: string;
-      amount: number;
-      paid_at: string;
-      notes: string | null;
-    }[] = [];
-
+    const splits: { sale_id: string; amount: number }[] = [];
     for (const s of allOpenSales) {
       if (remaining <= 0) break;
       const rest = +(Number(s.total) - Number(s.paid_amount)).toFixed(2);
       if (rest <= 0) continue;
       const apply = Math.min(rest, remaining);
-      inserts.push({
-        sale_id: s.id,
-        payment_method_id: bulkMethod,
-        amount: +apply.toFixed(2),
-        paid_at: paidAtIso,
-        notes: bulkNotes || null,
-      });
+      splits.push({ sale_id: s.id, amount: +apply.toFixed(2) });
       remaining = +(remaining - apply).toFixed(2);
     }
 
-    if (inserts.length === 0) {
+    if (splits.length === 0) {
       return setBulkError("Nenhuma venda em aberto para distribuir.");
     }
 
+    const receiptAmount = +splits.reduce((acc, x) => acc + x.amount, 0).toFixed(2);
+
     setBulkSaving(true);
+    // Documento integral primeiro — vira o "pix" que o cliente reconhece.
+    const { data: receiptRow, error: receiptErr } = await supabase
+      .from("customer_payments")
+      .insert({
+        customer_id: id,
+        payment_method_id: bulkMethod,
+        amount: receiptAmount,
+        paid_at: paidAtIso,
+        notes: bulkNotes || null,
+      })
+      .select("id")
+      .single();
+    if (receiptErr || !receiptRow) {
+      setBulkSaving(false);
+      setBulkError(receiptErr?.message ?? "Falha ao criar recibo.");
+      return;
+    }
+
+    const inserts = splits.map((s) => ({
+      sale_id: s.sale_id,
+      payment_method_id: bulkMethod,
+      amount: s.amount,
+      paid_at: paidAtIso,
+      notes: bulkNotes || null,
+      receipt_id: receiptRow.id,
+    }));
     const { error } = await supabase.from("sale_payments").insert(inserts);
     setBulkSaving(false);
     if (error) {
+      // Rollback do recibo pra não deixar órfão.
+      await supabase.from("customer_payments").delete().eq("id", receiptRow.id);
       setBulkError(error.message);
       return;
     }
     setBulkOpen(false);
-    toast.success(`Pagamento distribuído em ${inserts.length} venda(s).`);
+    toast.success(
+      `Recibo de ${brl(receiptAmount)} abatido em ${inserts.length} venda(s).`
+    );
     load();
   }
 
@@ -246,6 +277,81 @@ export default function ClienteDetalhePage() {
       ),
     [payments]
   );
+
+  // Agrupa pagamentos por recibo. Receipts já vêm com data dos abatimentos
+  // (sale_payments.receipt_id). Pagamentos antigos sem receipt_id viram
+  // "orphan" — após o backfill da v27 isso deve ser zero.
+  type PaymentGroup =
+    | { kind: "receipt"; receipt: CustomerPayment; splits: SalePayment[]; paid_at: string }
+    | { kind: "orphan"; payment: SalePayment; paid_at: string };
+
+  const paymentGroups = useMemo<PaymentGroup[]>(() => {
+    const byReceipt = new Map<string, SalePayment[]>();
+    const orphans: SalePayment[] = [];
+    for (const p of payments) {
+      if (p.receipt_id) {
+        const arr = byReceipt.get(p.receipt_id) ?? [];
+        arr.push(p);
+        byReceipt.set(p.receipt_id, arr);
+      } else {
+        orphans.push(p);
+      }
+    }
+    const groups: PaymentGroup[] = [];
+    for (const r of receipts) {
+      groups.push({
+        kind: "receipt",
+        receipt: r,
+        splits: byReceipt.get(r.id) ?? [],
+        paid_at: r.paid_at,
+      });
+    }
+    for (const o of orphans) {
+      groups.push({ kind: "orphan", payment: o, paid_at: o.paid_at });
+    }
+    groups.sort(
+      (a, b) => new Date(b.paid_at).getTime() - new Date(a.paid_at).getTime()
+    );
+    return groups;
+  }, [payments, receipts]);
+
+  function toggleReceiptExpand(receiptId: string) {
+    setExpandedReceipts((cur) => {
+      const next = new Set(cur);
+      if (next.has(receiptId)) next.delete(receiptId);
+      else next.add(receiptId);
+      return next;
+    });
+  }
+
+  async function deleteReceipt(r: CustomerPayment) {
+    // Apaga splits primeiro pra triggers do sale_payments
+    // recalcularem status das vendas afetadas.
+    const splitIds = payments
+      .filter((p) => p.receipt_id === r.id)
+      .map((p) => p.id);
+    if (splitIds.length > 0) {
+      const { error: e1 } = await supabase
+        .from("sale_payments")
+        .delete()
+        .in("id", splitIds);
+      if (e1) {
+        toast.error(e1.message);
+        return;
+      }
+    }
+    const { error } = await supabase
+      .from("customer_payments")
+      .delete()
+      .eq("id", r.id);
+    setConfirmDeleteReceipt(null);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Recibo removido.");
+    load();
+  }
 
   // Filtered + tabbed sales
   const filteredSales = useMemo(() => {
@@ -466,10 +572,10 @@ export default function ClienteDetalhePage() {
         </div>
       )}
 
-      {/* Payments history */}
+      {/* Payments history — 1 row por recibo, expand mostra abatimentos */}
       <div className="card">
         <h2 className="font-bold text-coco-900 mb-3">Histórico de pagamentos</h2>
-        {sortedPayments.length === 0 ? (
+        {paymentGroups.length === 0 ? (
           <p className="text-coco-600 text-sm">
             Nenhum pagamento lançado ainda.
           </p>
@@ -477,60 +583,142 @@ export default function ClienteDetalhePage() {
           <table className="table">
             <thead>
               <tr>
-                <th>Data do pagamento</th>
+                <th>Data</th>
                 <th>Forma</th>
                 <th className="text-right">Valor</th>
-                <th>Venda</th>
+                <th>Abate</th>
                 <th>Observação</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {sortedPayments.map((p) => {
-                const sale = sales.find((s) => s.id === p.sale_id);
-                return (
-                  <tr key={p.id}>
-                    <td>{fmtDate(p.paid_at)}</td>
-                    <td>{methods[p.payment_method_id]?.name ?? "—"}</td>
-                    <td className="text-right font-semibold text-green-700">
-                      {brl(Number(p.amount))}
-                    </td>
-                    <td className="text-xs">
-                      {sale ? (
-                        <Link
-                          href={`/recibo/${sale.id}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-coco-700 underline"
-                        >
-                          venda de {fmtDateOnly(sale.created_at)}
-                        </Link>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td className="text-xs text-coco-600">{p.notes ?? ""}</td>
-                    <td className="text-right whitespace-nowrap">
-                      {isAdmin && (
-                        <>
-                          <button
-                            onClick={() => setEditingPayment(p)}
-                            className="btn-ghost text-xs"
-                            title="Editar pagamento"
+              {paymentGroups.map((g) => {
+                if (g.kind === "orphan") {
+                  const p = g.payment;
+                  const sale = sales.find((s) => s.id === p.sale_id);
+                  return (
+                    <tr key={`o-${p.id}`}>
+                      <td>{fmtDate(p.paid_at)}</td>
+                      <td>{methods[p.payment_method_id]?.name ?? "—"}</td>
+                      <td className="text-right font-semibold text-green-700">
+                        {brl(Number(p.amount))}
+                      </td>
+                      <td className="text-xs">
+                        {sale ? (
+                          <Link
+                            href={`/recibo/${sale.id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-coco-700 underline"
                           >
-                            ✏️
-                          </button>
+                            venda de {fmtDateOnly(sale.created_at)}
+                          </Link>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="text-xs text-coco-600">{p.notes ?? ""}</td>
+                      <td className="text-right whitespace-nowrap">
+                        {isAdmin && (
+                          <>
+                            <button
+                              onClick={() => setEditingPayment(p)}
+                              className="btn-ghost text-xs"
+                              title="Editar pagamento"
+                            >
+                              ✏️
+                            </button>
+                            <button
+                              onClick={() => setConfirmDelete(p)}
+                              className="btn-ghost text-xs text-red-700"
+                              title="Remover pagamento"
+                            >
+                              🗑
+                            </button>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                }
+                const r = g.receipt;
+                const splits = g.splits;
+                const isExpanded = expandedReceipts.has(r.id);
+                const splitCount = splits.length;
+                return (
+                  <Fragment key={`r-${r.id}`}>
+                    <tr className={isExpanded ? "bg-coco-50/40" : undefined}>
+                      <td>{fmtDate(r.paid_at)}</td>
+                      <td>{methods[r.payment_method_id]?.name ?? "—"}</td>
+                      <td className="text-right font-semibold text-green-700">
+                        {brl(Number(r.amount))}
+                      </td>
+                      <td className="text-xs">
+                        <button
+                          type="button"
+                          onClick={() => toggleReceiptExpand(r.id)}
+                          className="text-coco-700 underline"
+                          title={isExpanded ? "Recolher" : "Ver abatimentos"}
+                        >
+                          {splitCount} venda{splitCount === 1 ? "" : "s"}{" "}
+                          {isExpanded ? "▾" : "▸"}
+                        </button>
+                      </td>
+                      <td className="text-xs text-coco-600">{r.notes ?? ""}</td>
+                      <td className="text-right whitespace-nowrap">
+                        {isAdmin && (
                           <button
-                            onClick={() => setConfirmDelete(p)}
+                            onClick={() => setConfirmDeleteReceipt(r)}
                             className="btn-ghost text-xs text-red-700"
-                            title="Remover pagamento"
+                            title="Remover recibo e todos os abatimentos"
                           >
                             🗑
                           </button>
-                        </>
-                      )}
-                    </td>
-                  </tr>
+                        )}
+                      </td>
+                    </tr>
+                    {isExpanded &&
+                      splits.map((s) => {
+                        const sale = sales.find((x) => x.id === s.sale_id);
+                        return (
+                          <tr
+                            key={`s-${s.id}`}
+                            className="bg-coco-50/20 text-xs"
+                          >
+                            <td className="pl-6 text-coco-500">↳</td>
+                            <td></td>
+                            <td className="text-right text-coco-700">
+                              {brl(Number(s.amount))}
+                            </td>
+                            <td colSpan={2}>
+                              {sale ? (
+                                <Link
+                                  href={`/recibo/${sale.id}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-coco-700 underline"
+                                >
+                                  venda de {fmtDateOnly(sale.created_at)}
+                                </Link>
+                              ) : (
+                                "—"
+                              )}
+                            </td>
+                            <td className="text-right whitespace-nowrap">
+                              {isAdmin && (
+                                <button
+                                  onClick={() => setEditingPayment(s)}
+                                  className="btn-ghost text-xs"
+                                  title="Editar este abatimento"
+                                >
+                                  ✏️
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -746,6 +934,26 @@ export default function ClienteDetalhePage() {
           }
           onCancel={() => setConfirmDelete(null)}
           onConfirm={() => deletePayment(confirmDelete)}
+        />
+      )}
+
+      {confirmDeleteReceipt && (
+        <ConfirmModal
+          title="Remover recibo inteiro?"
+          danger
+          confirmText="Remover recibo"
+          message={
+            <>
+              Vai apagar o recibo de{" "}
+              <strong>{brl(Number(confirmDeleteReceipt.amount))}</strong> de{" "}
+              {fmtDate(confirmDeleteReceipt.paid_at)}{" "}
+              <strong>e todos os abatimentos que ele fez nas vendas</strong>.
+              Os saldos das vendas afetadas são recalculados automaticamente. A
+              ação fica registrada na auditoria.
+            </>
+          }
+          onCancel={() => setConfirmDeleteReceipt(null)}
+          onConfirm={() => deleteReceipt(confirmDeleteReceipt)}
         />
       )}
 

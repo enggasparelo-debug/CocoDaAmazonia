@@ -103,6 +103,17 @@ export type SalePayment = {
   paid_at: string;
   notes: string | null;
   attachment_url?: string | null;
+  receipt_id?: string | null;
+};
+
+export type CustomerPayment = {
+  id: string;
+  tenant_id: string;
+  customer_id: string;
+  payment_method_id: string;
+  amount: number;
+  paid_at: string;
+  notes: string | null;
 };
 
 export type CustomerBalance = {
