@@ -58,9 +58,9 @@ with grouped as (
     s.customer_id,
     sp.payment_method_id,
     sp.paid_at,
-    sum(sp.amount)        as amount,
-    min(sp.notes)         as notes,
-    min(sp.created_by)    as created_by
+    sum(sp.amount)                            as amount,
+    min(sp.notes)                             as notes,
+    (array_agg(sp.created_by))[1]             as created_by
   from public.sale_payments sp
   join public.sales s on s.id = sp.sale_id
   where sp.receipt_id is null
