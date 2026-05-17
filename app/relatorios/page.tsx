@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { brl, fmtDate } from "@/lib/format";
@@ -54,6 +54,14 @@ function isoEnd(d: string) {
 }
 
 export default function RelatoriosPage() {
+  return (
+    <Suspense fallback={<div className="text-coco-600">Carregando…</div>}>
+      <RelatoriosInner />
+    </Suspense>
+  );
+}
+
+function RelatoriosInner() {
   const supabase = createClient();
   const toast = useToast();
   const { isAdmin } = useTenant();
