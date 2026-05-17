@@ -14,6 +14,7 @@ import type {
   PaymentMethod,
 } from "@/lib/types";
 import { useToast } from "@/components/Toast";
+import ConfirmModal from "@/components/ConfirmModal";
 
 // ─── Excel parser (same flexible parser as before) ───────────
 
@@ -128,6 +129,7 @@ export default function AccountPage() {
   } | null>(null);
   const [savingExpense, setSavingExpense] = useState(false);
   const [closing, setClosing] = useState(false);
+  const [confirmClose, setConfirmClose] = useState(false);
 
   async function loadAccount() {
     const { data } = await supabase
@@ -318,15 +320,19 @@ export default function AccountPage() {
     toast.success("Despesa criada e conciliada!");
   }
 
-  async function closeReconciliation() {
+  function requestCloseReconciliation() {
     if (!activeRec) return;
     const pendingCount = items.filter((i) => i.status === "pending").length;
     if (pendingCount > 0) {
-      const ok = window.confirm(
-        `Ainda há ${pendingCount} lançamento(s) pendente(s). Fechar assim mesmo?`
-      );
-      if (!ok) return;
+      setConfirmClose(true);
+      return;
     }
+    doCloseReconciliation();
+  }
+
+  async function doCloseReconciliation() {
+    if (!activeRec) return;
+    setConfirmClose(false);
     setClosing(true);
     await supabase
       .from("bank_reconciliations")
@@ -394,7 +400,7 @@ export default function AccountPage() {
               </button>
               {activeRec.status === "open" && (
                 <button
-                  onClick={closeReconciliation}
+                  onClick={requestCloseReconciliation}
                   disabled={closing}
                   className="btn-primary text-sm bg-green-700 hover:bg-green-800"
                 >
@@ -716,6 +722,24 @@ export default function AccountPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {confirmClose && (
+        <ConfirmModal
+          title="Fechar com pendentes?"
+          message={
+            <>
+              Ainda há{" "}
+              <strong>{items.filter((i) => i.status === "pending").length} lançamento(s)</strong>{" "}
+              pendente(s) sem conciliação. Fechar mesmo assim?
+            </>
+          }
+          confirmText="Fechar conciliação"
+          cancelText="Voltar"
+          loading={closing}
+          onConfirm={doCloseReconciliation}
+          onCancel={() => setConfirmClose(false)}
+        />
       )}
     </div>
   );

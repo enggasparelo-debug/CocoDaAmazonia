@@ -34,6 +34,8 @@ import DashboardAlerts, {
   type DashboardAlert,
 } from "@/components/DashboardAlerts";
 import TopList from "@/components/TopList";
+import TodayCard from "@/components/TodayCard";
+import SyncStatus from "@/components/SyncStatus";
 import SaleEditor from "@/components/SaleEditor";
 import EmptyOnboarding, {
   type OnboardingStep,
@@ -886,6 +888,10 @@ export default function DashboardClient() {
       {onboardingSteps.length > 0 && (
         <EmptyOnboarding steps={onboardingSteps} />
       )}
+
+      <TodayCard />
+
+      <SyncStatus />
 
       <DashboardAlerts alerts={alerts} />
 

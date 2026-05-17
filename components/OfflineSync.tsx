@@ -28,6 +28,12 @@ export default function OfflineSync() {
         toast.success(`${r.flushed} venda(s) sincronizada(s).`);
       if (r.failed > 0 && showToast)
         toast.warn(`${r.failed} ainda pendente(s) (sem conexão).`);
+      if (r.failed === 0) {
+        try {
+          localStorage.setItem("offline.lastSyncAt", String(Date.now()));
+          window.dispatchEvent(new Event("offline-sync-changed"));
+        } catch {}
+      }
     } finally {
       setBusy(false);
       refresh();

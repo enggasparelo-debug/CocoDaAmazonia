@@ -4,7 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { brl } from "@/lib/format";
 import { useToast } from "@/components/Toast";
+import ConfirmModal from "@/components/ConfirmModal";
 import type { Payable, Expense, Supplier } from "@/lib/types";
+
+type PayingItem =
+  | { kind: "payable"; raw: Payable }
+  | { kind: "expense"; raw: Expense };
 
 const CATEGORIES = [
   "Fornecedor de Coco",
@@ -105,6 +110,12 @@ export default function PagarPage() {
 
   const [horizon, setHorizon] = useState(30);
   const [receivables, setReceivables] = useState<{ amount: number }[]>([]);
+  const [paying, setPaying] = useState<PayingItem | null>(null);
+  const [payDate, setPayDate] = useState<string>(todayStr());
+  const [payAmount, setPayAmount] = useState<number>(0);
+  const [confirmCancel, setConfirmCancel] = useState<Payable | null>(null);
+  const [confirmDeleteExp, setConfirmDeleteExp] = useState<Expense | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -223,42 +234,62 @@ export default function PagarPage() {
     load();
   }
 
-  async function markPayablePaid(p: Payable) {
-    const { error } = await supabase
-      .from("payables")
-      .update({ status: "pago", paid_at: new Date().toISOString(), paid_amount: p.amount })
-      .eq("id", p.id);
+  function openPayPayable(p: Payable) {
+    setPaying({ kind: "payable", raw: p });
+    setPayDate(todayStr());
+    setPayAmount(Number(p.amount));
+  }
+
+  function openPayExpense(e: Expense) {
+    setPaying({ kind: "expense", raw: e });
+    setPayDate(todayStr());
+    setPayAmount(Number(e.amount));
+  }
+
+  async function confirmPay() {
+    if (!paying) return;
+    if (!payDate) return toast.error("Data do pagamento obrigatória.");
+    if (payAmount <= 0) return toast.error("Valor inválido.");
+    setActionLoading(true);
+    const paidAtIso = new Date(payDate + "T12:00:00").toISOString();
+    const op =
+      paying.kind === "payable"
+        ? supabase
+            .from("payables")
+            .update({ status: "pago", paid_at: paidAtIso, paid_amount: payAmount })
+            .eq("id", paying.raw.id)
+        : supabase
+            .from("expenses")
+            .update({ status: "paid", paid_at: paidAtIso })
+            .eq("id", paying.raw.id);
+    const { error } = await op;
+    setActionLoading(false);
     if (error) return toast.error(error.message);
-    toast.success("Marcada como paga.");
+    toast.success(paying.kind === "payable" ? "Marcada como paga." : "Despesa marcada como paga.");
+    setPaying(null);
     load();
   }
 
-  async function markExpensePaid(e: Expense) {
-    const { error } = await supabase
-      .from("expenses")
-      .update({ status: "paid", paid_at: new Date().toISOString() })
-      .eq("id", e.id);
-    if (error) return toast.error(error.message);
-    toast.success("Despesa marcada como paga.");
-    load();
-  }
-
-  async function cancelPayable(id: string) {
-    if (!confirm("Cancelar esta conta?")) return;
+  async function doCancelPayable(id: string) {
+    setActionLoading(true);
     const { error } = await supabase
       .from("payables")
       .update({ status: "cancelado" })
       .eq("id", id);
+    setActionLoading(false);
     if (error) return toast.error(error.message);
     toast.success("Conta cancelada.");
+    setConfirmCancel(null);
     load();
   }
 
-  async function deleteExpense(id: string) {
-    if (!confirm("Apagar esta despesa?")) return;
+  async function doDeleteExpense(id: string) {
+    setActionLoading(true);
     const { error } = await supabase.from("expenses").delete().eq("id", id);
+    setActionLoading(false);
     if (error) return toast.error(error.message);
     toast.success("Despesa apagada.");
+    setConfirmDeleteExp(null);
     load();
   }
 
@@ -352,7 +383,24 @@ export default function PagarPage() {
       {loading ? (
         <div className="text-coco-700">Carregando…</div>
       ) : filtered.length === 0 ? (
-        <div className="text-gray-400 text-center py-12">Nenhuma conta encontrada.</div>
+        <div className="bg-white rounded-xl border border-dashed border-gray-200 text-center py-12 px-4">
+          <div className="text-4xl mb-3">🧾</div>
+          <div className="text-coco-800 font-semibold mb-1">
+            {filterStatus === "pendente"
+              ? "Sem contas pendentes"
+              : filterStatus === "pago"
+              ? "Nenhuma conta paga ainda"
+              : "Nenhuma conta cadastrada"}
+          </div>
+          <div className="text-sm text-gray-500 mb-4">
+            {filterStatus === "pendente"
+              ? "Boa! Tudo em dia."
+              : "Cadastre a primeira pra acompanhar pagamentos e projeção de caixa."}
+          </div>
+          <button onClick={() => setEditing(emptyPayable())} className="btn-primary">
+            + Nova Conta
+          </button>
+        </div>
       ) : (
         <div className="space-y-2">
           {filtered.map((item) => {
@@ -412,13 +460,13 @@ export default function PagarPage() {
                     {isPending && (
                       <>
                         <button
-                          onClick={() => markExpensePaid(e)}
+                          onClick={() => openPayExpense(e)}
                           className="btn-primary text-xs px-3 py-1"
                         >
                           ✓ Pagar
                         </button>
                         <button
-                          onClick={() => deleteExpense(e.id)}
+                          onClick={() => setConfirmDeleteExp(e)}
                           className="text-gray-400 hover:text-red-600 text-xs"
                           title="Apagar despesa"
                         >
@@ -480,7 +528,7 @@ export default function PagarPage() {
                   {isPending && (
                     <>
                       <button
-                        onClick={() => markPayablePaid(p)}
+                        onClick={() => openPayPayable(p)}
                         className="btn-primary text-xs px-3 py-1"
                         title="Marcar como paga"
                       >
@@ -493,7 +541,7 @@ export default function PagarPage() {
                         Editar
                       </button>
                       <button
-                        onClick={() => cancelPayable(p.id)}
+                        onClick={() => setConfirmCancel(p)}
                         className="text-gray-400 hover:text-red-600 text-xs"
                       >
                         ✕
@@ -510,7 +558,7 @@ export default function PagarPage() {
       {/* Modal de edição de conta a pagar */}
       {editing && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4 max-h-[90dvh] overflow-y-auto">
             <h2 className="text-lg font-bold text-coco-800">
               {editing.id ? "Editar Conta" : "Nova Conta a Pagar"}
             </h2>
@@ -641,6 +689,102 @@ export default function PagarPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal: marcar como paga (escolhe data + valor) */}
+      {paying && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4 max-h-[90dvh] overflow-y-auto">
+            <h2 className="text-lg font-bold text-coco-800">Marcar como paga</h2>
+            <div className="text-sm text-gray-600">
+              {paying.kind === "payable"
+                ? paying.raw.supplier_name || paying.raw.description
+                : paying.raw.description}
+              <div className="text-xs text-gray-400 mt-0.5">
+                Valor original: {brl(Number(paying.raw.amount))}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Data do pagamento *</label>
+                <input
+                  className="input-field"
+                  type="date"
+                  max={todayStr()}
+                  value={payDate}
+                  onChange={(e) => setPayDate(e.target.value)}
+                />
+              </div>
+              {paying.kind === "payable" && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Valor pago *</label>
+                  <input
+                    className="input-field"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={payAmount}
+                    onChange={(e) => setPayAmount(parseFloat(e.target.value) || 0)}
+                  />
+                </div>
+              )}
+            </div>
+            <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2">
+              <button
+                className="btn-secondary btn-touch"
+                onClick={() => setPaying(null)}
+                disabled={actionLoading}
+              >
+                Cancelar
+              </button>
+              <button
+                className="btn-primary btn-touch"
+                onClick={confirmPay}
+                disabled={actionLoading}
+              >
+                {actionLoading ? "Salvando…" : "Confirmar pagamento"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmCancel && (
+        <ConfirmModal
+          title="Cancelar conta?"
+          message={
+            <>
+              <strong>{confirmCancel.supplier_name || confirmCancel.description}</strong>
+              {" — "}
+              {brl(Number(confirmCancel.amount))}. Esta ação marca como cancelada e remove dos
+              pendentes.
+            </>
+          }
+          confirmText="Cancelar conta"
+          cancelText="Voltar"
+          danger
+          loading={actionLoading}
+          onConfirm={() => doCancelPayable(confirmCancel.id)}
+          onCancel={() => setConfirmCancel(null)}
+        />
+      )}
+
+      {confirmDeleteExp && (
+        <ConfirmModal
+          title="Apagar despesa?"
+          message={
+            <>
+              <strong>{confirmDeleteExp.description}</strong> — {brl(Number(confirmDeleteExp.amount))}.
+              Esta ação é permanente.
+            </>
+          }
+          confirmText="Apagar"
+          cancelText="Voltar"
+          danger
+          loading={actionLoading}
+          onConfirm={() => doDeleteExpense(confirmDeleteExp.id)}
+          onCancel={() => setConfirmDeleteExp(null)}
+        />
       )}
     </div>
   );

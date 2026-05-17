@@ -115,6 +115,7 @@ export default function CargaDetailPage() {
     closing_cash_declared: 0,
   });
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmResync, setConfirmResync] = useState(false);
 
   // Conta quantas vezes esta carga foi reaberta (status fechada/conferida
   // → aberta) varrendo o audit_log já carregado.
@@ -466,12 +467,7 @@ export default function CargaDetailPage() {
 
   async function resyncInventory() {
     if (!carga) return;
-    if (
-      !confirm(
-        `Recalcular movimentos de estoque (carga_saida / retorno / perda) com base no estado atual desta carga?`
-      )
-    )
-      return;
+    setConfirmResync(false);
     setSaving(true);
     const { error } = await supabase.rpc("resync_carga_inventory", {
       p_carga_id: carga.id,
@@ -611,7 +607,7 @@ export default function CargaDetailPage() {
             </button>
           )}
           <button
-            onClick={resyncInventory}
+            onClick={() => setConfirmResync(true)}
             className="btn-ghost"
             title="Refaz carga_saida/retorno/perda com base no estado atual"
             disabled={saving}
@@ -1038,6 +1034,24 @@ export default function CargaDetailPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {confirmResync && (
+        <ConfirmModal
+          title="Recalcular movimentos?"
+          confirmText="Recalcular"
+          cancelText="Voltar"
+          loading={saving}
+          message={
+            <>
+              Vai refazer <code>carga_saida</code>, <code>carga_retorno</code> e <code>carga_perda</code>{" "}
+              com base no estado atual desta carga. Use após editar quantidades, fechamento ou vendas
+              antigas vinculadas.
+            </>
+          }
+          onCancel={() => setConfirmResync(false)}
+          onConfirm={resyncInventory}
+        />
       )}
 
       {confirmDelete && (
