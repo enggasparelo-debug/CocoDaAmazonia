@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { brl, fmtDate } from "@/lib/format";
 import type {
@@ -53,16 +54,42 @@ function isoEnd(d: string) {
 }
 
 export default function RelatoriosPage() {
+  return (
+    <Suspense fallback={<div className="text-coco-600">Carregando…</div>}>
+      <RelatoriosInner />
+    </Suspense>
+  );
+}
+
+function RelatoriosInner() {
   const supabase = createClient();
   const toast = useToast();
   const { isAdmin } = useTenant();
-  const [from, setFrom] = useState(firstOfMonthStr());
-  const [to, setTo] = useState(todayStr());
-  const [customerId, setCustomerId] = useState<string>("");
-  const [status, setStatus] = useState<string>("");
-  const [sellerId, setSellerId] = useState<string>("");
-  const [cargaId, setCargaId] = useState<string>("");
-  const [methodFilter, setMethodFilter] = useState<string>("");
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const initialFrom = searchParams.get("from") ?? firstOfMonthStr();
+  const initialTo = searchParams.get("to") ?? todayStr();
+  const [from, setFrom] = useState(initialFrom);
+  const [to, setTo] = useState(initialTo);
+  const [customerId, setCustomerId] = useState<string>(searchParams.get("customer") ?? "");
+  const [status, setStatus] = useState<string>(searchParams.get("status") ?? "");
+  const [sellerId, setSellerId] = useState<string>(searchParams.get("seller") ?? "");
+  const [cargaId, setCargaId] = useState<string>(searchParams.get("carga") ?? "");
+  const [methodFilter, setMethodFilter] = useState<string>(searchParams.get("method") ?? "");
+
+  useEffect(() => {
+    const p = new URLSearchParams();
+    if (from) p.set("from", from);
+    if (to) p.set("to", to);
+    if (customerId) p.set("customer", customerId);
+    if (status) p.set("status", status);
+    if (sellerId) p.set("seller", sellerId);
+    if (cargaId) p.set("carga", cargaId);
+    if (methodFilter) p.set("method", methodFilter);
+    const qs = p.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }, [from, to, customerId, status, sellerId, cargaId, methodFilter, pathname, router]);
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);

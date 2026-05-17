@@ -317,7 +317,7 @@ function Modal({
 }) {
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-end md:items-center justify-center p-0 md:p-4 overflow-y-auto">
-      <div className="bg-white md:rounded-2xl shadow-xl max-w-lg w-full p-5 md:p-6 min-h-[60vh] md:min-h-0 max-h-screen overflow-y-auto">
+      <div className="bg-white md:rounded-2xl shadow-xl max-w-lg w-full p-5 md:p-6 min-h-[60dvh] md:min-h-0 max-h-[100dvh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-bold text-coco-900">{title}</h2>
           <button onClick={onClose} className="btn-ghost">

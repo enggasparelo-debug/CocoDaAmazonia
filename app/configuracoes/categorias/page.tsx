@@ -5,6 +5,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import type { ExpenseCategory } from "@/lib/types";
 import { useToast } from "@/components/Toast";
+import ConfirmModal from "@/components/ConfirmModal";
 
 const empty: Partial<ExpenseCategory> = {
   name: "",
@@ -19,6 +20,8 @@ export default function CategoriasDespesaPage() {
   const [editing, setEditing] = useState<Partial<ExpenseCategory> | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState<ExpenseCategory | null>(null);
+  const [removing, setRemoving] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -66,18 +69,19 @@ export default function CategoriasDespesaPage() {
     load();
   }
 
-  async function remove(c: ExpenseCategory) {
-    if (!confirm(`Apagar categoria "${c.name}"?\n\nDespesas antigas continuam com o nome registrado.`))
-      return;
+  async function doRemove(c: ExpenseCategory) {
+    setRemoving(true);
     const { error } = await supabase
       .from("expense_categories")
       .delete()
       .eq("id", c.id);
+    setRemoving(false);
     if (error) {
       toast.error(error.message);
       return;
     }
     toast.success("Categoria apagada.");
+    setConfirmRemove(null);
     load();
   }
 
@@ -146,7 +150,7 @@ export default function CategoriasDespesaPage() {
                       {c.active ? "Desativar" : "Ativar"}
                     </button>
                     <button
-                      onClick={() => remove(c)}
+                      onClick={() => setConfirmRemove(c)}
                       className="btn-ghost text-sm text-red-700"
                     >
                       Apagar
@@ -158,6 +162,24 @@ export default function CategoriasDespesaPage() {
           </table>
         )}
       </div>
+
+      {confirmRemove && (
+        <ConfirmModal
+          title="Apagar categoria?"
+          message={
+            <>
+              Apagar <strong>"{confirmRemove.name}"</strong>? Despesas antigas continuam com o nome
+              registrado.
+            </>
+          }
+          confirmText="Apagar"
+          cancelText="Voltar"
+          danger
+          loading={removing}
+          onConfirm={() => doRemove(confirmRemove)}
+          onCancel={() => setConfirmRemove(null)}
+        />
+      )}
 
       {editing && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">

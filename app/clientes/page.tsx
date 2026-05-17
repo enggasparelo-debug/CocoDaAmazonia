@@ -22,6 +22,7 @@ export default function ClientesPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [balances, setBalances] = useState<Record<string, CustomerBalance>>({});
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [editing, setEditing] = useState<Partial<Customer> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -60,8 +61,20 @@ export default function ClientesPage() {
 
   async function load() {
     setLoading(true);
+    const term = debouncedSearch.trim();
+    let query = supabase
+      .from("customers")
+      .select("*")
+      .order("name")
+      .limit(term ? 200 : 500);
+    if (term) {
+      const esc = term.replace(/[%_,]/g, " ");
+      query = query.or(
+        `name.ilike.%${esc}%,phone.ilike.%${esc}%,document.ilike.%${esc}%`
+      );
+    }
     const [c, b] = await Promise.all([
-      supabase.from("customers").select("*").order("name").limit(2000),
+      query,
       supabase.from("customer_balances").select("*").limit(2000),
     ]);
     setCustomers((c.data as Customer[]) ?? []);
@@ -74,19 +87,16 @@ export default function ClientesPage() {
   }
 
   useEffect(() => {
-    load();
-  }, []);
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return customers;
-    return customers.filter(
-      (c) =>
-        c.name.toLowerCase().includes(q) ||
-        c.phone?.toLowerCase().includes(q) ||
-        c.document?.toLowerCase().includes(q)
-    );
-  }, [customers, search]);
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedSearch]);
+
+  const filtered = customers;
 
   const summary = useMemo(() => {
     const now = Date.now();
